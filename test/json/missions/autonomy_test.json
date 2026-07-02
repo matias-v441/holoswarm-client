@@ -1,0 +1,12 @@
+{
+  "type": "AutonomyTestPlanner",
+  "uuid": "20ab7a6c-231b-48ed-83cc-864041ae40bd",
+  "details": {
+    "robots": [
+      {
+        "name": "uav1",
+        "segment_length": 5
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+[project]
+name = "holoswarm_client"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "dearpygui",
+  "screeninfo",
+  "httpx",
+  "websockets",
+  "pyproj",
+  "requests",
+  "Pillow",
+  "numpy"
+]
+
+[tool.setuptools.packages.find]
+include = ["gui","cuzk","iroc","data"]

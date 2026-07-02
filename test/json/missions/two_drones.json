@@ -1,0 +1,66 @@
+{
+  "type": "WaypointPlanner",
+  "uuid": "550e8400-e29b-41d4-a716-446655440000",
+  "details": {
+    "robots": [
+      {
+        "name": "uav11",
+        "frame_id": 0,
+        "height_id": 0,
+        "points": [
+          {
+            "x": 20,
+            "y": 10,
+            "z": 3,
+            "heading": 1
+          },
+          {
+            "x": -20,
+            "y": 10,
+            "z": 4,
+            "heading": 3
+          },
+          {
+            "x": 10,
+            "y": -10,
+            "z": 2,
+            "heading": 2
+          },
+          {
+            "x": -20,
+            "y": -20,
+            "z": 4,
+            "heading": 3
+          },
+          {
+            "x": 10,
+            "y": 20,
+            "z": 2,
+            "heading": 2
+          }
+        ],
+        "terminal_action": 0
+      },
+      {
+        "name": "uav12",
+        "frame_id": 0,
+        "height_id": 0,
+        "points": [
+          {
+            "x": 30,
+            "y": 5,
+            "z": 3,
+            "heading": 0
+          },
+          {
+            "x": 40,
+            "y": 5,
+            "z": 3,
+            "heading": 0
+          }
+        ],
+        "terminal_action": 0
+      }
+    ]
+  }
+}

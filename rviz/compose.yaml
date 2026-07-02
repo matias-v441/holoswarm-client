@@ -1,0 +1,29 @@
+
+x-mrs-base: &mrs_base
+  image: ${IMAGE:-matbii/mrs-holoswarm:latest}
+  ipc: host
+  privileged: true
+  environment:
+    ROS_DOMAIN_ID: ${ROS_DOMAIN_ID}
+    RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION}
+
+
+services:
+   
+  bridge:
+    <<: *mrs_base
+    network_mode: host
+    command: bash -c "zenoh-bridge-ros2dds -e ${BRIDGE_TARGET}"
+
+  rviz:
+    <<: *mrs_base
+    network_mode: host
+    volumes:
+      - ./:/etc/docker/rviz
+        # we mount the folder below to enable passing GUI to the host
+      - /dev/dri:/dev/dri
+    working_dir: /etc/docker/rviz
+    environment:
+      DISPLAY: $DISPLAY
+    command: bash -c "ros2 run rviz2 rviz2 -d ${CONFIG_DIR}/rviz.rviz --ros-args -p use_sim_time:=true"
+

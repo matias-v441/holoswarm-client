@@ -1,0 +1,70 @@
+{
+  "type": "WaypointPlanner",
+  "uuid": "550e8400-e29b-41d4-a716-446655440000",
+  "details": {
+    "robots": [
+      {
+        "name": "uav1",
+        "frame_id": 0,
+        "height_id": 0,
+        "points": [
+          {
+            "x": 20,
+            "y": 10,
+            "z": 3,
+            "heading": 1
+          },
+          {
+            "x": 20,
+            "y": 10,
+            "z": 3,
+            "heading": 3
+          },
+          {
+            "x": -20,
+            "y": -20,
+            "z": 4,
+            "heading": 3,
+            "subtasks": [
+              {
+                "type": "gimbal",
+                "parameters": [0.5, 0.5, 0.5]
+              }
+            ]
+          },
+          {
+            "x": -10,
+            "y": 10,
+            "z": 5,
+            "heading": 3
+          },
+          {
+            "x": 10,
+            "y": -10,
+            "z": 4,
+            "heading": 3,
+            "subtasks": [
+              {
+                "type": "wait",
+                "parameters": 5.6
+              }
+            ]
+          },
+          {
+            "x": 20,
+            "y": 10,
+            "z": 3,
+            "heading": 1,
+            "subtasks": [
+              {
+                "type": "wait",
+                "parameters": 5.6
+              }
+            ]
+          }
+        ],
+        "terminal_action": 0
+      }
+    ]
+  }
+}
