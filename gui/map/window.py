@@ -13,6 +13,9 @@ from gui.map.controller import Controller
 from gui.map.handlers.map_grid import MapGridHandlers
 from gui.map.handlers.primitives import Primitives
 from gui.map.views.waypoint import WaypointPrimitive
+import asyncio
+from asyncio import AbstractEventLoop
+from queue import SimpleQueue, Empty
 
 Point = tuple[float, float]
 
@@ -20,6 +23,7 @@ class MapGridWindow:
     def __init__(
         self,
         map: Map,
+        api_loop: AbstractEventLoop,
         tag: str = "map_grid"
     ) -> None:
         self.tag = tag
@@ -53,11 +57,15 @@ class MapGridWindow:
         map.mission.subscribe(self._mission_callback)
 
         self._tracked_primitives: dict[str,WaypointPrimitive] = {}
+        self.api_loop = api_loop
+        self._map_image_bytes = None
+
+        self._ui_events = SimpleQueue()
 
 
     def add(self) -> None:
 
-        self.load_texture()
+        self.request_map()
 
         with dpg.window(
             tag=self.window_tag
@@ -96,18 +104,37 @@ class MapGridWindow:
                 self._tracked_primitives[uuid] = view
                 view.draw()
 
-
-    def load_texture(self) -> None:
+    def request_map(self):
         size_m = (self.image_size_m, self.image_size_m)
         size_px = (int(size_m[0]/self.map.meters_per_pixel),int(size_m[1]/self.map.meters_per_pixel))
         print(f"Requesting image size {size_m} {size_px}")
-        image_bytes = self.cuzk_client.get_square_image(self.map.origin_lon, self.map.origin_lat, size_m, size_px)
-        Path("prague_ortofoto.png").write_bytes(image_bytes)
-        image = Image.open(BytesIO(image_bytes)).convert("RGBA")
+
+        future = asyncio.run_coroutine_threadsafe(
+            self.cuzk_client.get_square_image(self.map.origin_lon, self.map.origin_lat, size_m, size_px),
+            self.api_loop)
+
+        def on_map_acquired(future):
+            try:
+                self._map_image_bytes = future.result()
+                self._ui_events.put(self.load_texture)
+                self._ui_events.put(self.draw)
+            except Exception as e:
+                print("Failed to aquire the map")
+
+        future.add_done_callback(on_map_acquired)
+
+    def process_events(self):
+        while True:
+            try:
+                event = self._ui_events.get_nowait()
+            except Empty:
+                break
+            event.__call__()
+
+    def load_texture(self) -> None:
+        image = Image.open(BytesIO(self._map_image_bytes)).convert("RGBA")
         width, height = image.size
         data = np.asarray(image, dtype=np.float32) / 255.0
-        print(data.shape)
-        assert width == size_px[0] and height == size_px[1], f"got {width}x{height} instead of {size_px}"
         data = data.ravel()
 
         texture_exists = dpg.does_item_exist(self.texture_tag)
@@ -173,8 +200,7 @@ class MapGridWindow:
         self.map.origin_lat = origin_lat
         self.map.origin_lon = origin_lon
         self.image_size_m = image_size_m
-        self.load_texture()
-        self.draw()
+        self.request_map()
 
     def draw(self) -> None:
         if not dpg.does_item_exist(self.drawlist_tag):

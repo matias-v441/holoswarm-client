@@ -1,7 +1,4 @@
-from pathlib import Path
-from urllib.parse import urlencode
-
-import requests
+import httpx
 from pyproj import Transformer
 
 
@@ -17,7 +14,7 @@ class CuzkOrtofotoClient:
     Output: PNG image
     """
 
-    def __init__(self, timeout: int = 30):
+    def __init__(self, timeout: float = 30.0):
         self.timeout = timeout
         self.transformer = Transformer.from_crs(
             "EPSG:4326",
@@ -25,7 +22,7 @@ class CuzkOrtofotoClient:
             always_xy=True,  # lon, lat order
         )
 
-    def get_square_image(
+    async def get_square_image(
         self,
         lon: float,
         lat: float,
@@ -67,14 +64,14 @@ class CuzkOrtofotoClient:
             "TRANSPARENT": "false",
         }
 
-        response = requests.get(
-            CUZK_WMS_URL,
-            params=params,
-            timeout=self.timeout,
-            headers={
-                "User-Agent": "cuzk-ortofoto-python-example/1.0"
-            },
-        )
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(
+                CUZK_WMS_URL,
+                params=params,
+                headers={
+                    "User-Agent": "cuzk-ortofoto-python-example/1.0"
+                },
+            )
 
         response.raise_for_status()
 
@@ -90,7 +87,7 @@ class CuzkOrtofotoClient:
         # return output_path
         return response.content
 
-    def get_capabilities_xml(self) -> str:
+    async def get_capabilities_xml(self) -> str:
         """
         Fetch WMS capabilities XML, useful for checking layer names,
         supported CRS values, formats, etc.
@@ -101,14 +98,14 @@ class CuzkOrtofotoClient:
             "REQUEST": "GetCapabilities",
         }
 
-        response = requests.get(
-            CUZK_WMS_URL,
-            params=params,
-            timeout=self.timeout,
-            headers={
-                "User-Agent": "cuzk-ortofoto-python-example/1.0"
-            },
-        )
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.get(
+                CUZK_WMS_URL,
+                params=params,
+                headers={
+                    "User-Agent": "cuzk-ortofoto-python-example/1.0"
+                },
+            )
         response.raise_for_status()
         return response.text
 

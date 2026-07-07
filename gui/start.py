@@ -1,14 +1,30 @@
 import dearpygui.dearpygui as dpg
+import asyncio
 from gui.map.window import MapGridWindow
 from data.mission import Mission
 from data.session import Session
+from data.monitoring import Monitoring
 from gui.map.model import Map
 from gui.explorer.window import ExplorerWindow 
+
+from listeners.telemetry import TelemetryListener
+from iroc.client import IROCClient
+
+from gui.uav.window import UAVWindow
+import threading
 
 LAYOUT_FILE = "user_layout.ini"
 
 
 def run():
+    api_loop = asyncio.new_event_loop()
+
+    def asyncio_thread_main():
+        asyncio.set_event_loop(api_loop)
+        api_loop.run_forever()
+
+    threading.Thread(target=asyncio_thread_main, daemon=True).start()
+
     dpg.create_context()
 
     dpg.configure_app(
@@ -20,20 +36,36 @@ def run():
 
     mission = Mission()
     session = Session()
+    monitoring = Monitoring()
 
     map = Map(mission=mission, session=session)
-    canvas = MapGridWindow(map)
-    canvas.add()
+    map_window = MapGridWindow(map, api_loop)
+    map_window.add()
 
     explorer = ExplorerWindow(mission,session)
     explorer.add()
+
+    client = IROCClient(server="buninmat_pc.sh.cvut.cz:8080")
+
+    uav11 = UAVWindow("uav11", monitoring, client, api_loop)
+    uav11.add()
+
+    uav12 = UAVWindow("uav12", monitoring, client, api_loop)
+    uav12.add()
+
+    telemetry = TelemetryListener(monitoring, client, api_loop)
+    telemetry.start()
 
     dpg.create_viewport(title="Docking example", width=1000, height=700)
     dpg.setup_dearpygui()
     dpg.show_viewport()
     try:
-        dpg.start_dearpygui()
+        while dpg.is_dearpygui_running():
+            monitoring.notify()
+            map_window.process_events()
+            dpg.render_dearpygui_frame()
     finally:
+        telemetry.stop()
         dpg.save_init_file(LAYOUT_FILE)
         dpg.destroy_context()
 

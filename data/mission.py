@@ -43,6 +43,7 @@ class Coverage:
     points: tuple[float,float] 
     time_interval: tuple[float,float]
     uuid: str = field(default_factory=lambda: str(uuid4()))
+    assigned_robots: tuple[str,...] = field(default_factory=tuple)
 
 P = TypeVar("P", PointLocal, PointGlobal)
 
@@ -56,6 +57,7 @@ class Waypoints(Generic[P]):
     points: tuple[P, ...]
     time_interval: tuple[float,float]
     uuid: str = field(default_factory=lambda: str(uuid4()))
+    assigned_robot: str | None = None
 
     def __post_init__(self) -> None:
         if self.points and not all(type(p) is type(self.points[0]) for p in self.points):

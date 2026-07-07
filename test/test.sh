@@ -2,7 +2,7 @@
 
 cd "$(dirname "$0")"
 
-./post.sh mission json/missions/one_drone.json
+./post.sh mission json/missions/two_drones.json
 
 sleep 1
 

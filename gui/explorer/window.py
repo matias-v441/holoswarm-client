@@ -38,7 +38,7 @@ class ExplorerWindow:
         self.tracked_items.clear()
         for wp in self.mission.waypoints.values():
             wp: Waypoints
-            wp_node = WaypointsNode(self.mission, wp.uuid, f"{self.window_tag}_{wp.uuid}", self.window_tag)
+            wp_node = WaypointsNode(self.mission, self.session, wp.uuid, f"{self.window_tag}_{wp.uuid}", self.window_tag)
             self.tracked_items[wp.uuid] = wp_node
             wp_node.draw()
 

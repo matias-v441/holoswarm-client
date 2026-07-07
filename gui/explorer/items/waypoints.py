@@ -1,20 +1,26 @@
 import dearpygui.dearpygui as dpg
 from data.mission import *
+from data.session import *
 from dataclasses import replace
 
 class WaypointsNode:
-    def __init__(self, mission: Mission, uuid: str, tag: str, parent_tag: str):
+    def __init__(self, mission: Mission, session: Session, uuid: str, tag: str, parent_tag: str):
         self.mission = mission
+        self.session = session
         self.path_uuid = uuid
         self.tag = tag
         self.parent_tag = parent_tag
     
     def delete(self):
-        dpg.delete_item(self.tag)
+        if dpg.does_item_exist(self.tag):
+            dpg.delete_item(self.tag)
 
     def draw(self):
+        if self.path_uuid not in self.mission.waypoints:
+            self.delete()
         wp: Waypoints = self.mission.waypoints[self.path_uuid]
         with dpg.tree_node(tag=self.tag, label=f"Path {self.path_uuid}", parent=self.parent_tag, default_open=True):
+            dpg.add_button(label="Delete path", callback=self._delete_path)
             for index, point in enumerate(wp.points):
                 label = f"Point {index}"
                 with dpg.tree_node(tag=f"{self.tag}_point_{index}", label=label, default_open=True):
@@ -45,6 +51,12 @@ class WaypointsNode:
                             dpg.add_text(f"{subtask_index + 1}. {type(subtask).__name__}: {subtask.parameter}")
                         dpg.add_button(label="Add wait", callback=self._add_wait_subtask, user_data=index)
 
+    def _delete_path(self, sender=None, app_data=None, user_data=None) -> None:
+        if self.session.item_selected(self.path_uuid):
+            selection = self.session.selection
+            if selection:
+                self.session.pop(selection.uuid)
+        self.mission.pop_task(self.path_uuid)
     
     def _replace_point(self, point_index: int, point: PointLocal | PointGlobal) -> None:
         wp: Waypoints = self.mission.waypoints[self.path_uuid]

@@ -30,9 +30,15 @@ class WaypointPrimitive:
     def size(self):
         return self._size
 
+    def delete(self) -> None:
+        for item in self.items:
+            if dpg.does_item_exist(item):
+                dpg.delete_item(item)
+
     def draw(self) -> None:
 
         if not self.active:
+            self.delete()
             return
 
         if not isinstance(self.mission.tasks[self.task_uuid], Waypoints):
@@ -43,9 +49,7 @@ class WaypointPrimitive:
         if not isinstance(wp.points[0], PointLocal):
             raise NotImplementedError(f"Global frame is not supported")
 
-        for item in self.items:
-            if dpg.does_item_exist(item):
-                dpg.delete_item(item)
+        self.delete()
         self.items = set()
 
         wp_selected = self.session.item_selected(wp.uuid)
