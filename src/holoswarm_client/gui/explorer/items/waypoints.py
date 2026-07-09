@@ -1,6 +1,6 @@
 import dearpygui.dearpygui as dpg
-from data.mission import *
-from data.session import *
+from holoswarm_client.data.mission import *
+from holoswarm_client.data.session import *
 from dataclasses import replace
 
 class WaypointsNode:

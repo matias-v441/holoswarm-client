@@ -6,13 +6,13 @@ import numpy as np
 from math import floor
 import dearpygui.dearpygui as dpg
 
-from cuzk.client import CuzkOrtofotoClient
-from data.mission import Mission
-from gui.map.model import Map
-from gui.map.controller import Controller
-from gui.map.handlers.map_grid import MapGridHandlers
-from gui.map.handlers.primitives import Primitives
-from gui.map.views.waypoint import WaypointPrimitive
+from holoswarm_client.cuzk.client import CuzkOrtofotoClient
+from holoswarm_client.data.mission import Mission
+from holoswarm_client.gui.map.model import Map
+from holoswarm_client.gui.map.controller import Controller
+from holoswarm_client.gui.map.handlers.map_grid import MapGridHandlers
+from holoswarm_client.gui.map.handlers.primitives import Primitives
+from holoswarm_client.gui.map.views.waypoint import WaypointPrimitive
 import asyncio
 from asyncio import AbstractEventLoop
 from queue import SimpleQueue, Empty

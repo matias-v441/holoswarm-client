@@ -1,5 +1,5 @@
 import dearpygui.dearpygui as dpg
-from gui.map.model import Map
+from holoswarm_client.gui.map.model import Map
 
 from collections.abc import Callable
 

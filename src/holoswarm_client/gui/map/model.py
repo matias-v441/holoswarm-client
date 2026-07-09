@@ -1,8 +1,8 @@
 from dataclasses import dataclass,field
 from math import cos, sin, floor, log10, pi
 
-from data.mission import Mission
-from data.session import Session
+from holoswarm_client.data.mission import Mission
+from holoswarm_client.data.session import Session
 
 Point = tuple[float,float]
 

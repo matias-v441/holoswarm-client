@@ -3,8 +3,8 @@ import json
 from dataclasses import replace
 from typing import Any
 
-from data.monitoring import *
-from iroc.client import IROCClient
+from holoswarm_client.data.monitoring import *
+from holoswarm_client.iroc.client import IROCClient
 from asyncio import AbstractEventLoop
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidURI
 

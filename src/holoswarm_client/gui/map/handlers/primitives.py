@@ -1,7 +1,7 @@
 import dearpygui.dearpygui as dpg
-from gui.map.model import Map
-from data.mission import *
-from data.session import *
+from holoswarm_client.gui.map.model import Map
+from holoswarm_client.data.mission import *
+from holoswarm_client.data.session import *
 from dataclasses import replace
 
 from collections.abc import Callable

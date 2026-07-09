@@ -1,10 +1,10 @@
 import dearpygui.dearpygui as dpg
 import asyncio
-from data.monitoring import *
+from holoswarm_client.data.monitoring import *
+from holoswarm_client.iroc.client import IROCClient
 from dataclasses import fields, is_dataclass
 from enum import Enum
 from asyncio import AbstractEventLoop
-from iroc.client import IROCClient
 from queue import SimpleQueue, Empty
 
 

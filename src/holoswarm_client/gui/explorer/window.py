@@ -1,9 +1,10 @@
 import dearpygui.dearpygui as dpg
-from data.mission import *
-from data.session import *
+from holoswarm_client.data.mission import *
+from holoswarm_client.data.session import *
+from holoswarm_client.gui.explorer.items.waypoints import WaypointsNode
+from holoswarm_client.iroc.client import IROCClient
+
 from dataclasses import replace
-from gui.explorer.items.waypoints import WaypointsNode
-from iroc.client import IROCClient
 import asyncio
 from asyncio import AbstractEventLoop
 from queue import SimpleQueue, Empty

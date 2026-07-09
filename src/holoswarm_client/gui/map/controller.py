@@ -1,7 +1,7 @@
 import dearpygui.dearpygui as dpg
-from gui.map.handlers.map_grid import MapGridHandlers
-from gui.map.handlers.primitives import Primitives
-from gui.map.model import Map
+from holoswarm_client.gui.map.handlers.map_grid import MapGridHandlers
+from holoswarm_client.gui.map.handlers.primitives import Primitives
+from holoswarm_client.gui.map.model import Map
 
 Point = tuple[float,float]
 
