@@ -6,6 +6,7 @@ from typing import Any
 from data.monitoring import *
 from iroc.client import IROCClient
 from asyncio import AbstractEventLoop
+from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidURI
 
 class TelemetryListener:
     def __init__(self, monitoring: Monitoring, client: IROCClient, api_loop: AbstractEventLoop):
@@ -24,8 +25,13 @@ class TelemetryListener:
             self._future.cancel()
 
     async def _listen(self) -> None:
-        async for message in self.client.telemetry():
-            self._handle_message(json.loads(message))
+        while True:
+            try:
+                async for message in self.client.telemetry():
+                    self._handle_message(json.loads(message))
+            except (InvalidURI, InvalidHandshake, OSError, ConnectionClosed) as exc:
+                print(f"WebSocket unavailable: {exc}. Reconnecting soon...")
+                await asyncio.sleep(5)
 
     def _handle_message(self, message: dict[str, Any]) -> None:
         message_type = (

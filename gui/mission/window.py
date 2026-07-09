@@ -7,18 +7,16 @@ from asyncio import AbstractEventLoop
 from iroc.client import IROCClient
 from queue import SimpleQueue, Empty
 
-
-class UAVWindow:
-
-    def __init__(self, name: str, monitoring: Monitoring, client: IROCClient, api_loop: AbstractEventLoop):
-        self.name = name
+class MissionWindow:
+    
+    def __init__(self, monitoring: Monitoring, client: IROCClient, api_loop: AbstractEventLoop):
         self.monitoring = monitoring
         self.client = client
         self.api_loop = api_loop
-        self.window_tag = f"uav_{name}_window"
-        self.tree_tag = f"{self.window_tag}_telemetry"
+        self.window_tag = f"mission_window"
+        self.tree_tag = f"{self.window_tag}_state"
         self.none_theme_tag = f"{self.window_tag}_none_theme"
-        self._last_telemetry = None
+        self._last_state = None
         monitoring.subscribe(self._draw)
         self._ui_events = SimpleQueue()
         self.response_text_tag = f"{self.window_tag}_response"
@@ -26,23 +24,20 @@ class UAVWindow:
     def add(self):
         self._add_none_theme()
         with dpg.window(
-            label=f"UAV {self.name}",
+            label=f"Mission",
             tag=self.window_tag
         ):
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Takeoff", callback=self._takeoff)
-                dpg.add_button(label="Hover", callback=self._hover)
-                dpg.add_button(label="Land", callback=self._land)
-                dpg.add_button(label="Home", callback=self._home)
-            dpg.add_text("",tag=self.response_text_tag)
+                dpg.add_button(label="Start", callback=self._start)
+                dpg.add_button(label="Pause", callback=self._pause)
+                dpg.add_button(label="Stop", callback=self._stop)
+            dpg.add_text("", tag=self.response_text_tag)
             dpg.add_group(tag=self.tree_tag)
-            for field in fields(RobotState):
-                if field.name == "robot_name":
-                    continue
+            for field in fields(MissionState):
                 self._draw_member(field.name, None, self.tree_tag, field.name)
         self._draw(self.monitoring)
 
-    def _on_command_done(self,future):
+    def _on_command_done(self, future):
         try:
             res = future.result()
             print("result:", res)
@@ -55,7 +50,7 @@ class UAVWindow:
             def show_result():
                 dpg.set_value(self.response_text_tag, error)
             self._ui_events.put(show_result)
-    
+
     def process_events(self):
         while True:
             try:
@@ -64,40 +59,32 @@ class UAVWindow:
                 break
             event.__call__()
 
-    def _takeoff(self) -> None:
-        future = asyncio.run_coroutine_threadsafe(self.client.takeoff(self.name), self.api_loop)
+    def _start(self) -> None:
+        future = asyncio.run_coroutine_threadsafe(self.client.start_mission(), self.api_loop)
         future.add_done_callback(self._on_command_done)
 
-    def _hover(self) -> None:
-        future = asyncio.run_coroutine_threadsafe(self.client.hover(self.name), self.api_loop)
+    def _pause(self) -> None:
+        future = asyncio.run_coroutine_threadsafe(self.client.pause_mission(), self.api_loop)
         future.add_done_callback(self._on_command_done)
 
-    def _land(self) -> None:
-        future = asyncio.run_coroutine_threadsafe(self.client.land(self.name), self.api_loop)
-        future.add_done_callback(self._on_command_done)
-
-    def _home(self) -> None:
-        future = asyncio.run_coroutine_threadsafe(self.client.home(self.name), self.api_loop)
+    def _stop(self) -> None:
+        future = asyncio.run_coroutine_threadsafe(self.client.stop_mission(), self.api_loop)
         future.add_done_callback(self._on_command_done)
 
     def _draw(self, monitoring):
-        telemetry = monitoring.telemetry(self.name)
-        if telemetry == self._last_telemetry or not dpg.does_item_exist(self.tree_tag):
+        state = getattr(monitoring, "_mission_state", None)
+        if state == self._last_state or not dpg.does_item_exist(self.tree_tag):
             return
 
-        self._last_telemetry = telemetry
+        self._last_state = state
 
-        if telemetry is None:
-            for field in fields(RobotState):
-                if field.name == "robot_name":
-                    continue
+        if state is None:
+            for field in fields(MissionState):
                 self._draw_member(field.name, None, self.tree_tag, field.name)
             return
 
-        for field in fields(telemetry):
-            if field.name == "robot_name":
-                continue
-            self._draw_member(field.name, getattr(telemetry, field.name), self.tree_tag, field.name)
+        for field in fields(state):
+            self._draw_member(field.name, getattr(state, field.name), self.tree_tag, field.name)
 
     def _add_none_theme(self) -> None:
         if dpg.does_item_exist(self.none_theme_tag):
@@ -135,8 +122,6 @@ class UAVWindow:
         if is_dataclass(value):
             expected_children = []
             for field in fields(value):
-                if field.name == "robot_name":
-                    continue
                 child_path = f"{path}_{field.name}"
                 expected_children.append(self._tag(child_path))
                 self._draw_member(field.name, getattr(value, field.name), parent, child_path)

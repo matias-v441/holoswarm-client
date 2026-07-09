@@ -2,7 +2,7 @@ from dataclasses import dataclass,field
 from collections.abc import Callable
 from types import MappingProxyType
 from uuid import uuid4
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, Any
 from enum import Enum
 
 @dataclass(frozen=True)
@@ -74,10 +74,14 @@ class Waypoints(Generic[P]):
 
 type MissionTask = Waypoints | Coverage
 
-@dataclass
+type Callback = Callable[["Mission"],None]
+
 class Mission:
 
-    _tasks: dict[str, MissionTask] = field(default_factory=dict)
+    def __init__(self, *robot_names: str):
+        self._tasks: dict[str, MissionTask] = {}
+        self._callbacks: list[Callback] = []
+        self.robot_names: tuple[str,...] = robot_names
 
     @property
     def tasks(self):
@@ -92,15 +96,6 @@ class Mission:
                 if isinstance(task, Waypoints)
             }
         )
-
-    type Callback = Callable[["Mission"],None]
-
-    _callbacks: list[Callback] = field(
-        default_factory=list,
-        init=False,
-        repr=False,
-        compare=False,
-    )
 
     def push_task(self, task: MissionTask) -> None:
         if self._tasks.get(task.uuid, None) == task:
@@ -118,3 +113,95 @@ class Mission:
     def _notify(self) -> None:
         for callback in self._callbacks:
             callback(self)
+
+    def to_json(self) -> dict[str, Any]:
+        def subtask_to_json(subtask: Subtask):
+            if isinstance(subtask, SubtaskWait):
+                return {
+                    "type": "wait",
+                    "parameters": subtask.parameter,
+                }
+            if isinstance(subtask, SubtaskGimball):
+                return {
+                    "type": "gimbal",
+                    "parameters": list(subtask.parameter),
+                }
+            if isinstance(subtask, SubtaskGazeboGimball):
+                return {
+                    "type": "gazebo_gimbal",
+                    "parameters": list(subtask.parameter),
+                    "continue_without_waiting": subtask.continue_without_waiting,
+                    "stop_on_failure": subtask.stop_on_failure,
+                    "max_retries": subtask.max_retries,
+                    "retry_delay": subtask.retry_delay,
+                }
+            raise TypeError(f"Unsupported subtask type: {type(subtask).__name__}")
+
+        def point_to_json(point: PointLocal | PointGlobal):
+            if isinstance(point, PointLocal):
+                x, y, z = point.position
+            elif isinstance(point, PointGlobal):
+                x, y, z = point.lat, point.lon, point.height
+            else:
+                raise TypeError(f"Unsupported point type: {type(point).__name__}")
+
+            point_json = {
+                "x": x,
+                "y": y,
+                "z": z,
+                "heading": point.heading,
+            }
+            if point.subtasks:
+                point_json["subtasks"] = [subtask_to_json(subtask) for subtask in point.subtasks]
+                if len(point.subtasks) > 1:
+                    point_json["parallel_execution"] = True
+            return point_json
+
+        if len(self._tasks) == 1:
+            task = next(iter(self._tasks.values()))
+            if isinstance(task, Coverage):
+                return {
+                    "type": "CoveragePlanner",
+                    "uuid": task.uuid,
+                    "details": {
+                        "robots": list(task.assigned_robots or self.robot_names),
+                        "search_area": [
+                            {"x": point[0], "y": point[1]}
+                            for point in task.points
+                        ],
+                        "height_id": 0,
+                        "height": task.time_interval[1],
+                        "terminal_action": 0,
+                    },
+                }
+
+        robots = []
+        for index, task in enumerate(self._tasks.values()):
+            if not isinstance(task, Waypoints):
+                continue
+
+            robot_name = task.assigned_robot
+            if robot_name is None and index < len(self.robot_names):
+                robot_name = self.robot_names[index]
+            if robot_name is None:
+                robot_name = ""
+
+            height_id = 0
+            if task.points and isinstance(task.points[0], PointGlobal):
+                height_id = task.points[0].height_id
+
+            robots.append({
+                "name": robot_name,
+                "frame_id": 0,
+                "height_id": height_id,
+                "points": [point_to_json(point) for point in task.points],
+                "terminal_action": 0,
+            })
+
+        return {
+            "type": "WaypointPlanner",
+            "uuid": str(uuid4()),
+            "details": {
+                "robots": robots,
+            },
+        }

@@ -179,19 +179,23 @@ type Callback = Callable[["Monitoring"],None]
 
 class Monitoring:
     def __init__(self):
-        self._states: dict[str, RobotState] = {}
+        self._robot_states: dict[str, RobotState] = {}
+        self._mission_state: MissionState = None
         self._callbacks: list[Callback] = []
         self._lock = Lock()
 
     def telemetry(self, robot_name: str):
-        return self._states.get(robot_name, None)
-
-    def robot_names(self):
-        return self._states
+        return self._robot_states.get(robot_name, None)
     
-    def push(self, robot_messages: RobotState) -> None:
+    def push(self, state: RobotState | MissionState) -> None:
         with self._lock:
-            self._states[robot_messages.robot_name] = robot_messages
+            if isinstance(state, RobotState):
+                self._robot_states[state.robot_name] = state
+            elif isinstance(state, MissionState):
+                print(state)
+                self._mission_state = state
+            else:
+                raise ValueError("Unknown instance")
 
     def subscribe(self,callback:Callback) -> None:
         self._callbacks.append(callback)
@@ -199,6 +203,7 @@ class Monitoring:
     def notify(self) -> None:
         with self._lock:
             ui_monitoring = Monitoring()
-            ui_monitoring._states = self._states.copy()
+            ui_monitoring._robot_states = self._robot_states.copy()
+            ui_monitoring._mission_state = self._mission_state
         for callback in self._callbacks:
             callback(ui_monitoring)

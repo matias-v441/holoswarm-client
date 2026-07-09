@@ -12,6 +12,3 @@ dependencies = [
   "Pillow",
   "numpy"
 ]
-
-[tool.setuptools.packages.find]
-include = ["gui","cuzk","iroc","data"]

@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 from typing import Any, AsyncIterator
 from urllib.parse import urlparse
-
 import httpx
 import websockets
 

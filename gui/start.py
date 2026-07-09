@@ -6,8 +6,10 @@ from data.session import Session
 from data.monitoring import Monitoring
 from gui.map.model import Map
 from gui.explorer.window import ExplorerWindow 
+from gui.mission.window import MissionWindow
 
 from listeners.telemetry import TelemetryListener
+from listeners.feedback import FeedbackListener
 from iroc.client import IROCClient
 
 from gui.uav.window import UAVWindow
@@ -34,7 +36,7 @@ def run():
         init_file=LAYOUT_FILE
     )
 
-    mission = Mission()
+    mission = Mission("uav11","uav12")
     session = Session()
     monitoring = Monitoring()
 
@@ -42,10 +44,13 @@ def run():
     map_window = MapGridWindow(map, api_loop)
     map_window.add()
 
-    explorer = ExplorerWindow(mission,session)
+    client = IROCClient(server="buninmat_pc.sh.cvut.cz:8080")
+
+    explorer = ExplorerWindow(mission, session, client, api_loop)
     explorer.add()
 
-    client = IROCClient(server="buninmat_pc.sh.cvut.cz:8080")
+    mission = MissionWindow(monitoring, client, api_loop)
+    mission.add()
 
     uav11 = UAVWindow("uav11", monitoring, client, api_loop)
     uav11.add()
@@ -56,16 +61,24 @@ def run():
     telemetry = TelemetryListener(monitoring, client, api_loop)
     telemetry.start()
 
-    dpg.create_viewport(title="Docking example", width=1000, height=700)
+    feedback = FeedbackListener(monitoring, client, api_loop)
+    feedback.start()
+
+    dpg.create_viewport(title="holoswarm client", width=1000, height=700)
     dpg.setup_dearpygui()
     dpg.show_viewport()
     try:
         while dpg.is_dearpygui_running():
             monitoring.notify()
             map_window.process_events()
+            uav11.process_events()
+            uav12.process_events()
+            explorer.process_events()
+            mission.process_events()
             dpg.render_dearpygui_frame()
     finally:
         telemetry.stop()
+        feedback.stop()
         dpg.save_init_file(LAYOUT_FILE)
         dpg.destroy_context()
 

@@ -20,7 +20,13 @@ class WaypointsNode:
             self.delete()
         wp: Waypoints = self.mission.waypoints[self.path_uuid]
         with dpg.tree_node(tag=self.tag, label=f"Path {self.path_uuid}", parent=self.parent_tag, default_open=True):
-            dpg.add_button(label="Delete path", callback=self._delete_path)
+            dpg.add_button(label="Delete", callback=self._delete_path)
+            dpg.add_combo(
+                items=list(self.mission.robot_names),
+                default_value=wp.assigned_robot or "",
+                width=120,
+                callback=self._on_assigned_robot_changed,
+            )
             for index, point in enumerate(wp.points):
                 label = f"Point {index}"
                 with dpg.tree_node(tag=f"{self.tag}_point_{index}", label=label, default_open=True):
@@ -57,6 +63,10 @@ class WaypointsNode:
             if selection:
                 self.session.pop(selection.uuid)
         self.mission.pop_task(self.path_uuid)
+
+    def _on_assigned_robot_changed(self, sender, app_data, user_data=None) -> None:
+        wp: Waypoints = self.mission.waypoints[self.path_uuid]
+        self.mission.push_task(replace(wp, assigned_robot=app_data))
     
     def _replace_point(self, point_index: int, point: PointLocal | PointGlobal) -> None:
         wp: Waypoints = self.mission.waypoints[self.path_uuid]
