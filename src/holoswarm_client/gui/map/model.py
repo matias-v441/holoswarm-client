@@ -3,6 +3,7 @@ from math import cos, sin, floor, log10, pi
 
 from holoswarm_client.data.mission import Mission
 from holoswarm_client.data.session import Session
+from holoswarm_client.data.monitoring import Monitoring
 
 Point = tuple[float,float]
 
@@ -10,6 +11,7 @@ Point = tuple[float,float]
 class Map:
     mission: Mission
     session: Session
+    monitoring: Monitoring 
     meters_per_pixel: float = 0.5
     min_meters_per_pixel: float = 0.03
     max_meters_per_pixel: float = 20.

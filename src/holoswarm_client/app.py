@@ -67,7 +67,7 @@ def main():
     session = Session()
     monitoring = Monitoring()
 
-    map = Map(mission=mission, session=session)
+    map = Map(mission=mission, session=session, monitoring=monitoring)
     map_window = MapGridWindow(map, api_loop)
     map_window.add()
 

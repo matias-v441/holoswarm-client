@@ -13,6 +13,7 @@ from holoswarm_client.gui.map.controller import Controller
 from holoswarm_client.gui.map.handlers.map_grid import MapGridHandlers
 from holoswarm_client.gui.map.handlers.primitives import Primitives
 from holoswarm_client.gui.map.views.waypoint import WaypointPrimitive
+from holoswarm_client.gui.map.views.fleet import Fleet
 import asyncio
 from asyncio import AbstractEventLoop
 from queue import SimpleQueue, Empty
@@ -51,10 +52,12 @@ class MapGridWindow:
         self.cuzk_client = CuzkOrtofotoClient()
         self.map = map
         self.controller = Controller(self.map, self.drawlist_tag,
-            map_grid=MapGridHandlers(self.map, self.drawlist_tag, self.draw),
+            map_grid=MapGridHandlers(self.map, self.drawlist_tag, lambda: self._ui_events.put(self._draw)),
             primitives=Primitives(self.map, self.drawlist_tag)
             )
         map.mission.subscribe(self._mission_callback)
+
+        self.fleet = Fleet(map, self.drawlist_tag)
 
         self._tracked_primitives: dict[str,WaypointPrimitive] = {}
         self.api_loop = api_loop
@@ -83,13 +86,13 @@ class MapGridWindow:
             dpg.configure_item(self.drawlist_tag,
                                 width=self.map.width,
                                 height=self.map.height)
-            self.draw()
+            self._draw()
         drawlist_handler_tag = f"{self.window_tag}_drawlist_handler"
         with dpg.item_handler_registry(tag=drawlist_handler_tag):
             dpg.add_item_resize_handler(callback=resize_callback)
         dpg.bind_item_handler_registry(self.window_tag, drawlist_handler_tag)
 
-        self.draw()
+        self._draw()
 
 
     def _mission_callback(self, mission: Mission) -> None:
@@ -117,7 +120,7 @@ class MapGridWindow:
             try:
                 self._map_image_bytes = future.result()
                 self._ui_events.put(self.load_texture)
-                self._ui_events.put(self.draw)
+                self._ui_events.put(self._draw)
             except Exception as e:
                 print("Failed to aquire the map")
 
@@ -202,7 +205,7 @@ class MapGridWindow:
         self.image_size_m = image_size_m
         self.request_map()
 
-    def draw(self) -> None:
+    def _draw(self) -> None:
         if not dpg.does_item_exist(self.drawlist_tag):
             return
 
@@ -228,6 +231,8 @@ class MapGridWindow:
 
         for primitive in self._tracked_primitives.values():
             primitive.draw()
+
+        self.fleet.draw()
 
     def draw_map_image(self, width: int, height: int) -> None:
         if not self.texture_loaded:
