@@ -28,7 +28,6 @@ class FeedbackListener:
         while True:
             try:
                 async for message in self.client.mission_feedback():
-                    print(message)
                     self._handle_message(json.loads(message))
             except (InvalidURI, InvalidHandshake, OSError, ConnectionClosed) as exc:
                 print(f"WebSocket unavailable: {exc}. Reconnecting soon...")
@@ -36,21 +35,19 @@ class FeedbackListener:
             
 
     def _handle_message(self, message: dict[str, Any]) -> None:
-        payload = message.get("data") or message.get("payload") or message.get("message") or message
-        robots = payload.get("robots", ())
-        self.monitoring.push(
-            MissionState(
-                progress=payload["progress"],
-                mission_state=payload["mission_state"],
-                message=payload["message"],
-                success=bool(payload.get("success", False)),
-                robots=tuple(
-                    MissionRobotResult(robot["robot"], robot["success"], robot["message"])
-                    for robot in robots
-                    if "success" in robot
-                ),
-            )
-        )
+        robots = message.get("robots", ())
+        mission = MissionState(
+                    progress=message["progress"],
+                    mission_state=message["mission_state"],
+                    message=message["message"],
+                    success=bool(message.get("success", False)),
+                    robots=tuple(
+                        MissionRobotResult(robot["robot"], robot["success"], robot["message"])
+                        for robot in robots
+                        if "success" in robot
+                    ),
+                )
+        self.monitoring.push(mission)
         for robot in robots:
             if "mission_progress" not in robot:
                 continue

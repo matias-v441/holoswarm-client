@@ -188,14 +188,14 @@ class Monitoring:
         return self._robot_states.get(robot_name, None)
     
     def push(self, state: RobotState | MissionState) -> None:
-        with self._lock:
-            if isinstance(state, RobotState):
+        if isinstance(state, RobotState):
+            with self._lock:
                 self._robot_states[state.robot_name] = state
-            elif isinstance(state, MissionState):
-                print(state)
+        elif isinstance(state, MissionState):
+            with self._lock:
                 self._mission_state = state
-            else:
-                raise ValueError("Unknown instance")
+        else:
+            raise ValueError("Unknown instance")
 
     def subscribe(self,callback:Callback) -> None:
         self._callbacks.append(callback)
