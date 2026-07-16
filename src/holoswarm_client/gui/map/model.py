@@ -18,6 +18,8 @@ class Map:
     meters_per_degree_lat: float = 111_320.0
     origin_lat: float = 49.361912
     origin_lon: float =  14.260508
+    location_name: str = ""
+    cache_dir: str = ""
     pan_px: list[float] = field(default_factory=lambda: [0.0, 0.0])
     width: float = 0.0
     height: float = 0.0

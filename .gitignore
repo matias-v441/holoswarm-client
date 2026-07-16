@@ -29,6 +29,9 @@ ENV/
 .agents/
 .codex/
 
+# User dir
+.holoswarm_client/
+
 # Use leading underscores for private stuff
 _*/
 **/_*/

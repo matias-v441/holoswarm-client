@@ -14,9 +14,9 @@ from holoswarm_client.iroc.client import IROCClient
 from holoswarm_client.gui.uav.window import UAVWindow
 
 import argparse
+import json
 import threading
-
-LAYOUT_FILE = "user_layout.ini"
+from pathlib import Path
 
 
 def main():
@@ -44,6 +44,19 @@ def main():
         help="One or more robot names/IDs.",
     )
 
+    parser.add_argument(
+        "--config_dir",
+        type=Path,
+        default=Path("config"),
+        help="Path to the config directory",
+    )
+
+    parser.add_argument(
+        "--location",
+        default="",
+        help="Location name",
+    )
+
     args = parser.parse_args()
 
     api_loop = asyncio.new_event_loop()
@@ -56,18 +69,39 @@ def main():
 
     dpg.create_context()
 
+    data_dir = Path(".holoswarm_client")
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    default_layout_file = str(args.config_dir / "default_layout.ini")
+    user_layout_file = str(data_dir / "layout.ini")
+
     dpg.configure_app(
         docking=True,
         docking_space=True,
         docking_shift_only=False,
-        init_file=LAYOUT_FILE
+        init_file=user_layout_file if Path(user_layout_file).exists() else default_layout_file,
     )
 
     mission = Mission(*args.robots)
     session = Session()
     monitoring = Monitoring()
 
-    map = Map(mission=mission, session=session, monitoring=monitoring)
+
+    config = json.loads((args.config_dir / "settings.json").read_bytes())
+    location = args.location
+    if not location:
+        location = config["current_location"]
+    origin_lat, origin_lon = config["locations"][location]
+
+    map = Map(
+        mission=mission,
+        session=session,
+        monitoring=monitoring,
+        origin_lat=origin_lat,
+        origin_lon=origin_lon,
+        location_name=location,
+        cache_dir=str(data_dir)
+    )
     map_window = MapGridWindow(map, api_loop)
     map_window.add()
 
@@ -107,6 +141,5 @@ def main():
     finally:
         telemetry.stop()
         feedback.stop()
-        dpg.save_init_file(LAYOUT_FILE)
+        dpg.save_init_file(user_layout_file)
         dpg.destroy_context()
-

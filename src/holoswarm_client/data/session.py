@@ -9,9 +9,16 @@ class Selection:
     uuid:str = field(default_factory=lambda: str(uuid4()))
     items: tuple[str] = field(default_factory=tuple)
 
+@dataclass(frozen=True)
+class Settings:
+    locations: dict[str, list[float]]
+    current_location: str
+    use_local_pose: bool = False
+    uuid:str = field(default_factory=lambda: str(uuid4()))
+
 type Callback = Callable[["Session"],None]
 
-type Primitive = Selection
+type Primitive = Selection | Settings
 
 class Session:
 

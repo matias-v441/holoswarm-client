@@ -6,16 +6,18 @@ from holoswarm_client.gui.map.model import Map
 
 class Fleet:
 
-    def __init__(self, map: Map, drawlist_tag: str = "map_grid_drawlist"):
+    def __init__(self, map: Map, drawlist_tag: str = "map_grid_drawlist", use_local_poses: bool = False):
         self.map = map
         self.drawlist_tag = drawlist_tag
-        self.local_poses: dict[str, LocalPose] = {}
+        self.use_local_poses = use_local_poses
+        self.poses: dict[str, LocalPose | GlobalPose] = {}
         self.items: set[int | str] = set()
         map.monitoring.subscribe(self.monitoring_callback)
 
     def monitoring_callback(self, monitoring: Monitoring) -> None:
-        self.local_poses = {
-            robot_name: state.state_estimation_info.local_pose
+        pose_attribute = "local_pose" if self.use_local_poses else "global_pose"
+        self.poses = {
+            robot_name: getattr(state.state_estimation_info, pose_attribute)
             for robot_name, state in monitoring._robot_states.items()
             if state.state_estimation_info is not None
         }
@@ -31,10 +33,16 @@ class Fleet:
             return
 
         size = 14.0
-        for robot_name, pose in self.local_poses.items():
-            if not pose.x or not pose.y or not pose.heading:
-                continue 
-            center = self.map.world_to_canvas((pose.x, pose.y))
+        for robot_name, pose in self.poses.items():
+            if self.use_local_poses:
+                if not pose.x or not pose.y or not pose.heading:
+                    continue
+                position = (pose.x, pose.y)
+            else:
+                if not pose.latitude or not pose.longitude or not pose.heading:
+                    continue
+                position = self.map.latlon_to_world(pose.latitude, pose.longitude)
+            center = self.map.world_to_canvas(position)
             direction = (cos(pose.heading), -sin(pose.heading))
             normal = (-direction[1], direction[0])
             back = (

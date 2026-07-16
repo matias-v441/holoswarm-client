@@ -75,8 +75,13 @@ class MapGridWindow:
         ):
             top_bar_tag = f"{self.window_tag}_top_bar"
             with dpg.group(tag=top_bar_tag, horizontal=True):
-                dpg.add_text(self.info_text(), tag=self.info_tag)
                 dpg.add_button(label="edit", tag=self.edit_button_tag, callback=self.open_edit_window)
+                dpg.add_checkbox(
+                    label="local",
+                    default_value=self.fleet.use_local_poses,
+                    callback=lambda _sender, value: setattr(self.fleet, "use_local_poses", value),
+                )
+                dpg.add_text(self.info_text(), tag=self.info_tag)
             dpg.add_drawlist(width=-1, height=-1, tag=self.drawlist_tag)
 
         # Fit the window size
@@ -110,6 +115,20 @@ class MapGridWindow:
     def request_map(self):
         size_m = (self.image_size_m, self.image_size_m)
         size_px = (int(size_m[0]/self.map.meters_per_pixel),int(size_m[1]/self.map.meters_per_pixel))
+        map_path = Path(self.map.cache_dir) / self.map.location_name
+        size_path = map_path.parent / f"{map_path.name}.size_m"
+        if map_path.is_file() and size_path.is_file():
+            try:
+                stored_size_m = float(size_path.read_text())
+                if stored_size_m >= self.image_size_m:
+                    self.image_size_m = stored_size_m
+                    self._map_image_bytes = map_path.read_bytes()
+                    self._ui_events.put(self.load_texture)
+                    self._ui_events.put(self._draw)
+                    return
+            except (OSError, ValueError):
+                pass
+
         print(f"Requesting image size {size_m} {size_px}")
 
         future = asyncio.run_coroutine_threadsafe(
@@ -119,6 +138,8 @@ class MapGridWindow:
         def on_map_acquired(future):
             try:
                 self._map_image_bytes = future.result()
+                map_path.write_bytes(self._map_image_bytes)
+                size_path.write_text(str(size_m[0]))
                 self._ui_events.put(self.load_texture)
                 self._ui_events.put(self._draw)
             except Exception as e:
@@ -305,6 +326,7 @@ class MapGridWindow:
 
     def info_text(self) -> str:
         return (
+            f"{self.map.location_name} "
             f"origin: {self.map.origin_lat:.4f}, {self.map.origin_lon:.4f} | "
             f"smallest grid cell: {self.map.grid_cell_meters():g} m | "
             f"scale: {self.map.meters_per_pixel:.3f} m/px"
