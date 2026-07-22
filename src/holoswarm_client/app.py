@@ -93,6 +93,8 @@ def main():
         location = config["current_location"]
     origin_lat, origin_lon = config["locations"][location]
 
+    client = IROCClient(server=f"{args.host}:{args.port}")
+
     map = Map(
         mission=mission,
         session=session,
@@ -102,10 +104,8 @@ def main():
         location_name=location,
         cache_dir=str(data_dir)
     )
-    map_window = MapGridWindow(map, api_loop)
+    map_window = MapGridWindow(map, client, api_loop)
     map_window.add()
-
-    client = IROCClient(server=f"{args.host}:{args.port}")
 
     explorer = ExplorerWindow(mission, session, client, api_loop)
     explorer.add()

@@ -52,9 +52,19 @@ class WaypointsNode:
                         dpg.add_input_float(label="heading", default_value=point.heading, width=120,
                                             callback=self._on_heading_changed, user_data=index, on_enter=True)
 
-                    with dpg.tree_node(label="Subtasks"):
+                    with dpg.tree_node(label="Subtasks", default_open=True):
                         for subtask_index, subtask in enumerate(point.subtasks):
-                            dpg.add_text(f"{subtask_index + 1}. {type(subtask).__name__}: {subtask.parameter}")
+                            if isinstance(subtask, SubtaskWait):
+                                dpg.add_input_float(
+                                    label=f"Wait {subtask_index + 1}",
+                                    default_value=subtask.parameter,
+                                    width=120,
+                                    callback=self._on_wait_subtask_changed,
+                                    user_data=(index, subtask_index),
+                                    on_enter=True,
+                                )
+                            else:
+                                dpg.add_text(f"{subtask_index + 1}. {type(subtask).__name__}: {subtask.parameter}")
                         dpg.add_button(label="Add wait", callback=self._add_wait_subtask, user_data=index)
 
     def _delete_path(self, sender=None, app_data=None, user_data=None) -> None:
@@ -103,3 +113,12 @@ class WaypointsNode:
     def _add_wait_subtask(self, sender, app_data, point_index: int) -> None:
         point = self.mission.waypoints[self.path_uuid].points[point_index]
         self._replace_point(point_index, replace(point, subtasks=(*point.subtasks, SubtaskWait(0.))))
+
+    def _on_wait_subtask_changed(self, sender, app_data, user_data) -> None:
+        point_index, subtask_index = user_data
+        point = self.mission.waypoints[self.path_uuid].points[point_index]
+        if not isinstance(point.subtasks[subtask_index], SubtaskWait):
+            return
+        subtasks = list(point.subtasks)
+        subtasks[subtask_index] = SubtaskWait(float(app_data))
+        self._replace_point(point_index, replace(point, subtasks=tuple(subtasks)))

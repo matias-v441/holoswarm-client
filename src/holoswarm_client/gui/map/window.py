@@ -14,9 +14,12 @@ from holoswarm_client.gui.map.handlers.map_grid import MapGridHandlers
 from holoswarm_client.gui.map.handlers.primitives import Primitives
 from holoswarm_client.gui.map.views.waypoint import WaypointPrimitive
 from holoswarm_client.gui.map.views.fleet import Fleet
+from holoswarm_client.gui.map.views.safety_area import SafetyArea
 import asyncio
 from asyncio import AbstractEventLoop
 from queue import SimpleQueue, Empty
+
+from holoswarm_client.iroc.client import IROCClient
 
 Point = tuple[float, float]
 
@@ -24,6 +27,7 @@ class MapGridWindow:
     def __init__(
         self,
         map: Map,
+        client: IROCClient,
         api_loop: AbstractEventLoop,
         tag: str = "map_grid"
     ) -> None:
@@ -58,6 +62,7 @@ class MapGridWindow:
         map.mission.subscribe(self._mission_callback)
 
         self.fleet = Fleet(map, self.drawlist_tag)
+        self.safety_area = SafetyArea(self.map, self.drawlist_tag, client, api_loop)
 
         self._tracked_primitives: dict[str,WaypointPrimitive] = {}
         self.api_loop = api_loop
@@ -69,6 +74,7 @@ class MapGridWindow:
     def add(self) -> None:
 
         self.request_map()
+        self.safety_area.aquire()
 
         with dpg.window(
             tag=self.window_tag
@@ -154,6 +160,8 @@ class MapGridWindow:
             except Empty:
                 break
             event.__call__()
+        self.safety_area.process_events()
+        self.fleet.process_events()
 
     def load_texture(self) -> None:
         image = Image.open(BytesIO(self._map_image_bytes)).convert("RGBA")
@@ -254,6 +262,7 @@ class MapGridWindow:
             primitive.draw()
 
         self.fleet.draw()
+        self.safety_area.draw()
 
     def draw_map_image(self, width: int, height: int) -> None:
         if not self.texture_loaded:

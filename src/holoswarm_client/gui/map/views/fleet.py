@@ -1,6 +1,8 @@
 import dearpygui.dearpygui as dpg
 from math import cos, sin
 
+from queue import SimpleQueue, Empty
+
 from holoswarm_client.data.monitoring import *
 from holoswarm_client.gui.map.model import Map
 
@@ -13,6 +15,7 @@ class Fleet:
         self.poses: dict[str, LocalPose | GlobalPose] = {}
         self.items: set[int | str] = set()
         map.monitoring.subscribe(self.monitoring_callback)
+        self._ui_events = SimpleQueue()
 
     def monitoring_callback(self, monitoring: Monitoring) -> None:
         pose_attribute = "local_pose" if self.use_local_poses else "global_pose"
@@ -21,9 +24,18 @@ class Fleet:
             for robot_name, state in monitoring._robot_states.items()
             if state.state_estimation_info is not None
         }
-        self.draw()
+        self._ui_events.put(self.draw)
+
+    def process_events(self):
+        while True:
+            try:
+                event = self._ui_events.get_nowait()
+            except Empty:
+                break
+            event.__call__()
 
     def draw(self):
+
         for item in self.items:
             if dpg.does_item_exist(item):
                 dpg.delete_item(item)
@@ -35,11 +47,11 @@ class Fleet:
         size = 14.0
         for robot_name, pose in self.poses.items():
             if self.use_local_poses:
-                if not pose.x or not pose.y or not pose.heading:
+                if pose.x is None or pose.y is None or pose.heading is None:
                     continue
                 position = (pose.x, pose.y)
             else:
-                if not pose.latitude or not pose.longitude or not pose.heading:
+                if pose.latitude is None or pose.longitude is None or pose.heading is None:
                     continue
                 position = self.map.latlon_to_world(pose.latitude, pose.longitude)
             center = self.map.world_to_canvas(position)
