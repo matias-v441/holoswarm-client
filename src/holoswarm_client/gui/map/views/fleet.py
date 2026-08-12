@@ -13,17 +13,36 @@ class Fleet:
         self.drawlist_tag = drawlist_tag
         self.use_local_poses = use_local_poses
         self.poses: dict[str, LocalPose | GlobalPose] = {}
+        self.homes: dict[str, LocalPose] = {}
         self.items: set[int | str] = set()
         map.monitoring.subscribe(self.monitoring_callback)
         self._ui_events = SimpleQueue()
 
     def monitoring_callback(self, monitoring: Monitoring) -> None:
         pose_attribute = "local_pose" if self.use_local_poses else "global_pose"
+        old_poses = self.poses
         self.poses = {
             robot_name: getattr(state.state_estimation_info, pose_attribute)
             for robot_name, state in monitoring._robot_states.items()
             if state.state_estimation_info is not None
         }
+        if not old_poses:
+            if self.use_local_poses:
+                self.homes = self.poses.copy()
+            else:
+                latlon_to_world = self.map.latlon_to_world
+                self.homes = {
+                    robot_name: LocalPose(
+                        *latlon_to_world(pose.latitude, pose.longitude),
+                        pose.altitude,
+                        pose.heading,
+                    )
+                    for robot_name, pose in self.poses.items()
+                }
+            self.map.mission.robot_homes = {
+                robot_name: (home.x, home.y)
+                for robot_name, home in self.homes.items()
+            }
         self._ui_events.put(self.draw)
 
     def process_events(self):

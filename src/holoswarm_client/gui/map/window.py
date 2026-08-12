@@ -261,7 +261,7 @@ class MapGridWindow:
         for primitive in self._tracked_primitives.values():
             primitive.draw()
 
-        self.fleet.draw()
+        #self.fleet.draw()
         self.safety_area.draw()
 
     def draw_map_image(self, width: int, height: int) -> None:

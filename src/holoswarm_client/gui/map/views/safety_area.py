@@ -24,9 +24,15 @@ class SafetyArea:
             self.client.get_borders(), self.api_loop
         )
         def on_completed(completed):
+            print(completed)
+            if completed.cancelled() or completed.exception() is not None:
+                return
+            result = completed.result()
+            if not result.is_success:
+                return
             self.points = [
                 (point["x"], point["y"])
-                for point in completed.result().json()["points"]
+                for point in result.json()["points"]
             ]
             self.draw()
         future.add_done_callback(

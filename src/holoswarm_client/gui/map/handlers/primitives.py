@@ -55,19 +55,36 @@ class Primitives:
         origin = self.map.origin_canvas(self.map.width, self.map.height)
         world_at_mouse = self.map.canvas_to_world(mouse, origin)
 
-        point = PointLocal((*world_at_mouse,5.),heading=0.)
-        if not self.active_path_uuid:
-            wp = Waypoints[PointLocal](points=(point,),time_interval=(0.,1.))
-            self.mission.push_task(wp)
-            selection = self.session.selection
-            if not selection:
-                selection = Selection()
-            selection = replace(selection, items=(wp.uuid,))
-            self.session.push(selection)
+        use_local = True
+        if use_local:
+            point = PointLocal((*world_at_mouse,5.),heading=0.)
+            if not self.active_path_uuid:
+                wp = Waypoints[PointLocal](points=(point,),time_interval=(0.,1.))
+                self.mission.push_task(wp)
+                selection = self.session.selection
+                if not selection:
+                    selection = Selection()
+                selection = replace(selection, items=(wp.uuid,))
+                self.session.push(selection)
+            else:
+                wp:Waypoints[PointLocal] = self.mission.tasks[self.active_path_uuid]
+                wp = replace(wp, points=(*wp.points,point))
+                self.mission.push_task(wp)
         else:
-            wp:Waypoints[PointLocal] = self.mission.tasks[self.active_path_uuid]
-            wp = replace(wp, points=(*wp.points,point))
-            self.mission.push_task(wp)
+            lat, lon = self.map.world_to_latlon(world_at_mouse)
+            point = PointGlobal(lat, lon, height_id=0, height=5., heading=0.)
+            if not self.active_path_uuid:
+                wp = Waypoints[PointGlobal](points=(point,), time_interval=(0., 1.))
+                self.mission.push_task(wp)
+                selection = self.session.selection
+                if not selection:
+                    selection = Selection()
+                selection = replace(selection, items=(wp.uuid,))
+                self.session.push(selection)
+            else:
+                wp: Waypoints[PointGlobal] = self.mission.tasks[self.active_path_uuid]
+                wp = replace(wp, points=(*wp.points, point))
+                self.mission.push_task(wp)
         return True
 
     def _find_clicked_uuid(self, mouse, radius=16.) -> str|None:

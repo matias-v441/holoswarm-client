@@ -82,6 +82,7 @@ class Mission:
         self._tasks: dict[str, MissionTask] = {}
         self._callbacks: list[Callback] = []
         self.robot_names: tuple[str,...] = robot_names
+        self.robot_homes: dict[str, tuple[float,float]] = {}
 
     @property
     def tasks(self):
@@ -137,9 +138,12 @@ class Mission:
                 }
             raise TypeError(f"Unsupported subtask type: {type(subtask).__name__}")
 
-        def point_to_json(point: PointLocal | PointGlobal):
+        def point_to_json(point: PointLocal | PointGlobal, origin: tuple[float,float]):
             if isinstance(point, PointLocal):
                 x, y, z = point.position
+                dx,dy = origin
+                x -= dx
+                y -= dy
             elif isinstance(point, PointGlobal):
                 x, y, z = point.lat, point.lon, point.height
             else:
@@ -194,7 +198,7 @@ class Mission:
                 "name": robot_name,
                 "frame_id": 0,
                 "height_id": height_id,
-                "points": [point_to_json(point) for point in task.points],
+                "points": [point_to_json(point, self.robot_homes[robot_name]) for point in task.points],
                 "terminal_action": 0,
             })
 
