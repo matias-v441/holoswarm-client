@@ -4,7 +4,7 @@ from holoswarm_client.gui.map.window import MapGridWindow
 from holoswarm_client.data.mission import Mission
 from holoswarm_client.data.session import Session
 from holoswarm_client.data.monitoring import Monitoring
-from holoswarm_client.gui.map.model import Map
+from holoswarm_client.gui.map.map import Map
 from holoswarm_client.gui.explorer.window import ExplorerWindow 
 from holoswarm_client.gui.mission.window import MissionWindow
 

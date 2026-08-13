@@ -1,5 +1,5 @@
 import dearpygui.dearpygui as dpg
-from holoswarm_client.gui.map.model import Map
+from holoswarm_client.gui.map.map import Map
 from holoswarm_client.data.mission import *
 from holoswarm_client.data.session import *
 from dataclasses import replace
@@ -11,7 +11,7 @@ Point = tuple[float,float]
 def ctrl_pressed() -> bool:
     return dpg.is_key_down(dpg.mvKey_LControl) or dpg.is_key_down(dpg.mvKey_RControl)
 
-class Primitives:
+class WaypointsHandlers:
 
     def __init__(self, map: Map, drawlist_tag: str):
         self.map = map

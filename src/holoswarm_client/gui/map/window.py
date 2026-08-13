@@ -8,11 +8,13 @@ import dearpygui.dearpygui as dpg
 
 from holoswarm_client.cuzk.client import CuzkOrtofotoClient
 from holoswarm_client.data.mission import Mission
-from holoswarm_client.gui.map.model import Map
+from holoswarm_client.gui.map.map import Map, ToolType
 from holoswarm_client.gui.map.controller import Controller
 from holoswarm_client.gui.map.handlers.map_grid import MapGridHandlers
-from holoswarm_client.gui.map.handlers.primitives import Primitives
+from holoswarm_client.gui.map.handlers.waypoints import WaypointsHandlers
+from holoswarm_client.gui.map.handlers.coverage import CoverageHandlers
 from holoswarm_client.gui.map.views.waypoint import WaypointPrimitive
+from holoswarm_client.gui.map.views.coverage import CoveragePrimitive
 from holoswarm_client.gui.map.views.fleet import Fleet
 from holoswarm_client.gui.map.views.safety_area import SafetyArea
 import asyncio
@@ -57,7 +59,8 @@ class MapGridWindow:
         self.map = map
         self.controller = Controller(self.map, self.drawlist_tag,
             map_grid=MapGridHandlers(self.map, self.drawlist_tag, lambda: self._ui_events.put(self._draw)),
-            primitives=Primitives(self.map, self.drawlist_tag)
+            waypoints=WaypointsHandlers(self.map, self.drawlist_tag),
+            coverage=CoverageHandlers(self.map, self.drawlist_tag)
             )
         map.mission.subscribe(self._mission_callback)
 
@@ -86,6 +89,12 @@ class MapGridWindow:
                     label="local",
                     default_value=self.fleet.use_local_poses,
                     callback=lambda _sender, value: setattr(self.fleet, "use_local_poses", value),
+                )
+                dpg.add_combo(
+                    items=[tool.value for tool in ToolType],
+                    default_value=self.map.active_tool.value,
+                    width=100,
+                    callback=lambda _sender, value: setattr(self.map, "active_tool", ToolType(value)),
                 )
                 dpg.add_text(self.info_text(), tag=self.info_tag)
             dpg.add_drawlist(width=-1, height=-1, tag=self.drawlist_tag)
@@ -117,6 +126,12 @@ class MapGridWindow:
                 view = WaypointPrimitive(self.map, self.drawlist_tag, uuid)
                 self._tracked_primitives[uuid] = view
                 view.draw()
+        for uuid in mission.areas.keys():
+            if uuid not in self._tracked_primitives:
+                view = CoveragePrimitive(self.map, self.drawlist_tag, uuid)
+                self._tracked_primitives[uuid] = view
+                view.draw()
+
 
     def request_map(self):
         size_m = (self.image_size_m, self.image_size_m)

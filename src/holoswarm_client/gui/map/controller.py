@@ -1,7 +1,8 @@
 import dearpygui.dearpygui as dpg
 from holoswarm_client.gui.map.handlers.map_grid import MapGridHandlers
-from holoswarm_client.gui.map.handlers.primitives import Primitives
-from holoswarm_client.gui.map.model import Map
+from holoswarm_client.gui.map.handlers.waypoints import WaypointsHandlers
+from holoswarm_client.gui.map.handlers.coverage import CoverageHandlers
+from holoswarm_client.gui.map.map import Map, ToolType
 
 Point = tuple[float,float]
 
@@ -9,11 +10,13 @@ class Controller:
 
     def __init__(self, map: Map, drawlist_tag: str, *,
             map_grid: MapGridHandlers,
-            primitives: Primitives
+            waypoints: WaypointsHandlers,
+            coverage: CoverageHandlers
         ):
 
         self.map_grid = map_grid
-        self.primitives = primitives
+        self.waypoints = waypoints
+        self.coverage = coverage
         self.drawlist_tag = drawlist_tag
         self.map = map
 
@@ -36,7 +39,12 @@ class Controller:
             return
         self.mouse_left_down = True 
         mouse_pos = self._local_mouse_pos(dpg.get_mouse_pos(local=False))
-        consumed = self.primitives.on_down(mouse_pos)
+        if self.map.active_tool == ToolType.WAYPOINT:
+            consumed = self.waypoints.on_down(mouse_pos)
+        elif self.map.active_tool == ToolType.COVERAGE:
+            consumed = self.coverage.on_down(mouse_pos)
+        else:
+            consumed = False
         if not consumed:
             self.map_grid.on_down()
 
@@ -50,4 +58,3 @@ class Controller:
     def _on_wheel(self, sender=None, app_data=None, user_data=None):
         mouse_pos = self._local_mouse_pos(dpg.get_mouse_pos(local=False))
         self.map_grid.on_wheel(mouse_pos, app_data)
-

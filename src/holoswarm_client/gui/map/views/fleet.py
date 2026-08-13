@@ -4,7 +4,7 @@ from math import cos, sin
 from queue import SimpleQueue, Empty
 
 from holoswarm_client.data.monitoring import *
-from holoswarm_client.gui.map.model import Map
+from holoswarm_client.gui.map.map import Map
 
 class Fleet:
 

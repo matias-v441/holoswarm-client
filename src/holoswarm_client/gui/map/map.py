@@ -1,4 +1,5 @@
 from dataclasses import dataclass,field
+from enum import Enum
 from math import cos, sin, floor, log10, pi
 
 from holoswarm_client.data.mission import Mission
@@ -6,6 +7,10 @@ from holoswarm_client.data.session import Session
 from holoswarm_client.data.monitoring import Monitoring
 
 Point = tuple[float,float]
+
+class ToolType(Enum):
+    WAYPOINT = "waypoint"
+    COVERAGE = "coverage"
 
 @dataclass 
 class Map:
@@ -23,6 +28,7 @@ class Map:
     pan_px: list[float] = field(default_factory=lambda: [0.0, 0.0])
     width: float = 0.0
     height: float = 0.0
+    active_tool: ToolType = ToolType.WAYPOINT
 
     def origin_canvas(self, width: int, height: int) -> Point:
         return width / 2 + self.pan_px[0], height / 2 + self.pan_px[1]

@@ -2,6 +2,7 @@ import dearpygui.dearpygui as dpg
 from holoswarm_client.data.mission import *
 from holoswarm_client.data.session import *
 from holoswarm_client.gui.explorer.items.waypoints import WaypointsNode
+from holoswarm_client.gui.explorer.items.coverage import CoverageNode
 from holoswarm_client.iroc.client import IROCClient
 
 from dataclasses import replace
@@ -23,7 +24,7 @@ class ExplorerWindow:
         self.window_tag = f"{tag}_window"
         self.mission = mission
         self.session = session
-        self.tracked_items: dict[str,WaypointsNode] = {}
+        self.tracked_items: dict[str,WaypointsNode | CoverageNode] = {}
         self.client = client
         self.api_loop = api_loop
         self._ui_events = SimpleQueue()
@@ -61,9 +62,15 @@ class ExplorerWindow:
             wp_node = WaypointsNode(self.mission, self.session, wp.uuid, f"{self.window_tag}_{wp.uuid}", self.window_tag)
             self.tracked_items[wp.uuid] = wp_node
             wp_node.draw()
+        for wp in self.mission.areas.values():
+            wp: Coverage
+            wp_node = CoverageNode(self.mission, self.session, wp.uuid, f"{self.window_tag}_{wp.uuid}", self.window_tag)
+            self.tracked_items[wp.uuid] = wp_node
+            wp_node.draw()
 
     def _upload_mission(self):
         mission_json = self.mission.to_json()
+        print(mission_json)
         future = asyncio.run_coroutine_threadsafe(self.client.upload_mission(mission_json), self.api_loop)
         def on_mission_uploaded(future):
             try:

@@ -42,6 +42,8 @@ class PointGlobal:
 class Coverage:
     points: tuple[float,float] 
     time_interval: tuple[float,float]
+    height_id: str | int
+    height: float
     uuid: str = field(default_factory=lambda: str(uuid4()))
     assigned_robots: tuple[str,...] = field(default_factory=tuple)
 
@@ -95,6 +97,16 @@ class Mission:
                 uuid: task
                 for uuid, task in self._tasks.items()
                 if isinstance(task, Waypoints)
+            }
+        )
+    
+    @property
+    def areas(self):
+        return MappingProxyType(
+            {
+                uuid: task
+                for uuid, task in self._tasks.items()
+                if isinstance(task, Coverage)
             }
         )
 
@@ -173,8 +185,8 @@ class Mission:
                             {"x": point[0], "y": point[1]}
                             for point in task.points
                         ],
-                        "height_id": 0,
-                        "height": task.time_interval[1],
+                        "height_id": task.height_id,
+                        "height": task.height,
                         "terminal_action": 0,
                     },
                 }

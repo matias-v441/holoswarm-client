@@ -1,7 +1,7 @@
 import dearpygui.dearpygui as dpg
 from holoswarm_client.data.mission import Mission, Waypoints, PointLocal, PointGlobal
 from holoswarm_client.data.session import Session
-from holoswarm_client.gui.map.model import Map
+from holoswarm_client.gui.map.map import Map
 
 from math import cos, sin
 
