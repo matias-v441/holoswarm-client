@@ -13,7 +13,8 @@ dependencies = [
   "websockets",
   "pyproj",
   "Pillow",
-  "numpy"
+  "numpy",
+  rerun-sdk
 ]
 
 [project.scripts]

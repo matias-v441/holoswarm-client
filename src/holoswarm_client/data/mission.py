@@ -4,6 +4,8 @@ from types import MappingProxyType
 from uuid import uuid4
 from typing import Generic, TypeVar, Any
 from enum import Enum
+from datetime import datetime
+import json
 
 @dataclass(frozen=True)
 class SubtaskWait:
@@ -127,6 +129,11 @@ class Mission:
         for callback in self._callbacks:
             callback(self)
 
+    def save_json(self, jrepr: Any) -> None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        with open(f"mission_{timestamp}.json", "w", encoding="utf-8") as file:
+            json.dump(jrepr, file)
+
     def to_json(self) -> dict[str, Any]:
         def subtask_to_json(subtask: Subtask):
             if isinstance(subtask, SubtaskWait):
@@ -176,7 +183,7 @@ class Mission:
         if len(self._tasks) == 1:
             task = next(iter(self._tasks.values()))
             if isinstance(task, Coverage):
-                return {
+                jrepr = {
                     "type": "CoveragePlanner",
                     "uuid": task.uuid,
                     "details": {
@@ -190,6 +197,8 @@ class Mission:
                         "terminal_action": 0,
                     },
                 }
+                self.save_json(jrepr)
+                return jrepr
 
         robots = []
         for index, task in enumerate(self._tasks.values()):
@@ -214,10 +223,12 @@ class Mission:
                 "terminal_action": 0,
             })
 
-        return {
+        jrepr = {
             "type": "WaypointPlanner",
             "uuid": str(uuid4()),
             "details": {
                 "robots": robots,
             },
         }
+        self.save_json(jrepr)
+        return jrepr

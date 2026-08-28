@@ -2,6 +2,7 @@ import dearpygui.dearpygui as dpg
 from holoswarm_client.data.mission import *
 from holoswarm_client.data.session import *
 from dataclasses import replace
+from math import degrees, radians
 
 class WaypointsNode:
     def __init__(self, mission: Mission, session: Session, uuid: str, tag: str, parent_tag: str):
@@ -38,7 +39,7 @@ class WaypointsNode:
                                             callback=self._on_local_position_changed, user_data=(index, 1), on_enter=True)
                         dpg.add_input_float(label="z", default_value=z, width=120,
                                             callback=self._on_local_position_changed, user_data=(index, 2), on_enter=True)
-                        dpg.add_input_float(label="heading", default_value=point.heading, width=120,
+                        dpg.add_input_float(label="heading", default_value=degrees(point.heading), width=120,
                                             callback=self._on_heading_changed, user_data=index, on_enter=True)
                     elif isinstance(point, PointGlobal):
                         dpg.add_input_float(label="lat", default_value=point.lat, width=120,
@@ -49,7 +50,7 @@ class WaypointsNode:
                                             callback=self._on_height_id_changed, user_data=index, on_enter=True)
                         dpg.add_input_float(label="height", default_value=point.height, width=120,
                                             callback=self._on_global_coordinate_changed, user_data=(index, "height"), on_enter=True)
-                        dpg.add_input_float(label="heading", default_value=point.heading, width=120,
+                        dpg.add_input_float(label="heading", default_value=degrees(point.heading), width=120,
                                             callback=self._on_heading_changed, user_data=index, on_enter=True)
 
                     with dpg.tree_node(label="Subtasks", default_open=True):
@@ -108,7 +109,7 @@ class WaypointsNode:
 
     def _on_heading_changed(self, sender, app_data, point_index: int) -> None:
         point = self.mission.waypoints[self.path_uuid].points[point_index]
-        self._replace_point(point_index, replace(point, heading=float(app_data)))
+        self._replace_point(point_index, replace(point, heading=radians(float(app_data))))
 
     def _add_wait_subtask(self, sender, app_data, point_index: int) -> None:
         point = self.mission.waypoints[self.path_uuid].points[point_index]
