@@ -14,7 +14,7 @@ dependencies = [
   "pyproj",
   "Pillow",
   "numpy",
-  rerun-sdk
+  "rerun-sdk"
 ]
 
 [project.scripts]
