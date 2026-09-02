@@ -44,17 +44,23 @@ class WaypointPrimitive:
         if not isinstance(self.mission.tasks[self.task_uuid], Waypoints):
             raise ValueError(f"Task {self.task_uuid} should a waypoint")
 
-        wp: Waypoints[PointLocal] = self.mission.tasks[self.task_uuid]
-
-        if not isinstance(wp.points[0], PointLocal):
-            raise NotImplementedError(f"Global frame is not supported")
+        wp: Waypoints[PointLocal] | Waypoints[PointGlobal] = self.mission.tasks[self.task_uuid]
 
         self.delete()
         self.items = set()
 
         wp_selected = self.session.item_selected(wp.uuid)
 
-        canvas_points = [(self.map.world_to_canvas(p.position[:2]),p.heading) for p in wp.points]
+        if wp.points and isinstance(wp.points[0], PointGlobal):
+            canvas_points = [
+                (self.map.world_to_canvas(self.map.latlon_to_world(p.lat, p.lon)), p.heading)
+                for p in wp.points
+            ]
+        else:
+            canvas_points = [
+                (self.map.world_to_canvas(p.position[:2]), p.heading)
+                for p in wp.points
+            ]
         
         line_color = (255, 255, 255, 255) if wp_selected else (255, 205, 89, 235)
         thickness = 3 if wp_selected else 2
@@ -117,4 +123,3 @@ class WaypointPrimitive:
             back[1] - normal[1] * self._size * 0.55,
         )
         return [tip, left, right]
-        

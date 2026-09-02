@@ -55,7 +55,8 @@ class WaypointsHandlers:
         origin = self.map.origin_canvas(self.map.width, self.map.height)
         world_at_mouse = self.map.canvas_to_world(mouse, origin)
 
-        use_local = True
+        # Always use global frame!
+        use_local = False
         if use_local:
             point = PointLocal((*world_at_mouse,5.),heading=0.)
             if not self.active_path_uuid:

@@ -20,15 +20,17 @@ class SafetyArea:
         self._ui_events = SimpleQueue()
     
     def aquire(self):
+        print("Aquiring safety area...")
         future = asyncio.run_coroutine_threadsafe(
             self.client.get_borders(), self.api_loop
         )
         def on_completed(completed):
-            print(completed)
             if completed.cancelled() or completed.exception() is not None:
+                self.aquire()
                 return
             result = completed.result()
             if not result.is_success:
+                self.aquire()
                 return
             self.points = [
                 (point["x"], point["y"])

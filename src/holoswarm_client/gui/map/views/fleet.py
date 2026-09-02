@@ -8,7 +8,7 @@ from holoswarm_client.gui.map.map import Map
 
 class Fleet:
 
-    def __init__(self, map: Map, drawlist_tag: str = "map_grid_drawlist", use_local_poses: bool = False):
+    def __init__(self, map: Map, drawlist_tag: str = "map_grid_drawlist", use_local_poses: bool = True):
         self.map = map
         self.drawlist_tag = drawlist_tag
         self.use_local_poses = use_local_poses

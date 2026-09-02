@@ -57,6 +57,12 @@ def main():
         help="Location name",
     )
 
+    parser.add_argument(
+        "--mission_path",
+        default="",
+        help="Mission json path",
+    )
+
     args = parser.parse_args()
 
     api_loop = asyncio.new_event_loop()
@@ -110,8 +116,8 @@ def main():
     explorer = ExplorerWindow(mission, session, client, api_loop)
     explorer.add()
 
-    mission = MissionWindow(monitoring, client, api_loop)
-    mission.add()
+    mission_window = MissionWindow(monitoring, client, api_loop)
+    mission_window.add()
 
     robots: list[UAVWindow] = []
     for robot in args.robots:
@@ -125,6 +131,9 @@ def main():
     feedback = FeedbackListener(monitoring, client, api_loop)
     feedback.start()
 
+    if args.mission_path:
+        mission.from_json(json.loads(Path(args.mission_path).read_bytes()))
+
     dpg.create_viewport(title="holoswarm client", width=1000, height=700)
     dpg.setup_dearpygui()
     dpg.show_viewport()
@@ -136,7 +145,7 @@ def main():
                 uav.process_events()
                 uav.process_events()
             explorer.process_events()
-            mission.process_events()
+            mission_window.process_events()
             dpg.render_dearpygui_frame()
     finally:
         telemetry.stop()

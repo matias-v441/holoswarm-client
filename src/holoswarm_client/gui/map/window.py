@@ -85,11 +85,11 @@ class MapGridWindow:
             top_bar_tag = f"{self.window_tag}_top_bar"
             with dpg.group(tag=top_bar_tag, horizontal=True):
                 dpg.add_button(label="edit", tag=self.edit_button_tag, callback=self.open_edit_window)
-                dpg.add_checkbox(
-                    label="local",
-                    default_value=self.fleet.use_local_poses,
-                    callback=lambda _sender, value: setattr(self.fleet, "use_local_poses", value),
-                )
+                # dpg.add_checkbox(
+                #     label="local",
+                #     default_value=self.fleet.use_local_poses,
+                #     callback=lambda _sender, value: setattr(self.fleet, "use_local_poses", value),
+                # )
                 dpg.add_combo(
                     items=[tool.value for tool in ToolType],
                     default_value=self.map.active_tool.value,

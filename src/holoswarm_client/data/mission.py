@@ -212,12 +212,14 @@ class Mission:
                 robot_name = ""
 
             height_id = 0
+            frame_id = 0
             if task.points and isinstance(task.points[0], PointGlobal):
                 height_id = task.points[0].height_id
+                frame_id = 1
 
             robots.append({
                 "name": robot_name,
-                "frame_id": 0,
+                "frame_id": frame_id,
                 "height_id": height_id,
                 "points": [point_to_json(point, self.robot_homes[robot_name]) for point in task.points],
                 "terminal_action": 0,
@@ -232,3 +234,74 @@ class Mission:
         }
         self.save_json(jrepr)
         return jrepr
+
+    def from_json(self, jrepr: dict[str, Any]) -> None:
+        def subtask_from_json(value: dict[str, Any]) -> Subtask:
+            subtask_type = value["type"]
+            parameters = value["parameters"]
+            if subtask_type == "wait":
+                return SubtaskWait(parameters)
+            if subtask_type == "gimbal":
+                return SubtaskGimball(tuple(parameters))
+            if subtask_type == "gazebo_gimbal":
+                return SubtaskGazeboGimball(
+                    tuple(parameters),
+                    value.get("continue_without_waiting", False),
+                    value.get("stop_on_failure", False),
+                    value.get("max_retries", 1),
+                    value.get("retry_delay", 0.),
+                )
+            raise ValueError(f"Unsupported subtask type: {subtask_type}")
+
+        mission_type = jrepr["type"]
+        details = jrepr["details"]
+        tasks: dict[str, MissionTask] = {}
+
+        if mission_type == "CoveragePlanner":
+            task = Coverage(
+                points=tuple((point["x"], point["y"]) for point in details["search_area"]),
+                time_interval=(0., 1.),
+                height_id=details["height_id"],
+                height=details["height"],
+                uuid=jrepr["uuid"],
+                assigned_robots=tuple(details.get("robots", ())),
+            )
+            tasks[task.uuid] = task
+        elif mission_type == "WaypointPlanner":
+            robots = details["robots"]
+            for index, robot in enumerate(robots):
+                robot_name = robot["name"]
+                height_id = robot["height_id"]
+                is_global = robot.get("frame_id", 0) == 1
+                origin_x, origin_y = self.robot_homes.get(robot_name, (0., 0.))
+                points = []
+                for value in robot["points"]:
+                    subtasks = tuple(
+                        subtask_from_json(subtask)
+                        for subtask in value.get("subtasks", ())
+                    )
+                    if is_global:
+                        point = PointGlobal(
+                            value["x"], value["y"], height_id, value["z"],
+                            value.get("heading", 0.), subtasks,
+                        )
+                    else:
+                        point = PointLocal(
+                            (value["x"] + origin_x, value["y"] + origin_y, value["z"]),
+                            value.get("heading", 0.), subtasks,
+                        )
+                    points.append(point)
+
+                task_uuid = jrepr["uuid"] if len(robots) == 1 else str(uuid4())
+                task = Waypoints(
+                    points=tuple(points),
+                    time_interval=(0., 1.),
+                    uuid=task_uuid,
+                    assigned_robot=robot_name,
+                )
+                tasks[task.uuid] = task
+        else:
+            raise ValueError(f"Unsupported mission type: {mission_type}")
+
+        self._tasks = tasks
+        self._notify()
