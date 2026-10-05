@@ -129,179 +129,28 @@ class Mission:
         for callback in self._callbacks:
             callback(self)
 
-    def save_json(self, jrepr: Any) -> None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        with open(f"mission_{timestamp}.json", "w", encoding="utf-8") as file:
-            json.dump(jrepr, file)
+    def to_json(self, mission_id: str | None = None) -> dict[str, Any]:
+        """Planner payload of the whole collection. Raises CodecError for content that does not fit one mission."""
+        from holoswarm_client.iroc.mission_codec import encode_draft
 
-    def to_json(self) -> dict[str, Any]:
-        def subtask_to_json(subtask: Subtask):
-            if isinstance(subtask, SubtaskWait):
-                return {
-                    "type": "wait",
-                    "parameters": subtask.parameter,
-                }
-            if isinstance(subtask, SubtaskGimball):
-                return {
-                    "type": "gimbal",
-                    "parameters": list(subtask.parameter),
-                }
-            if isinstance(subtask, SubtaskGazeboGimball):
-                return {
-                    "type": "gazebo_gimbal",
-                    "parameters": list(subtask.parameter),
-                    "continue_without_waiting": subtask.continue_without_waiting,
-                    "stop_on_failure": subtask.stop_on_failure,
-                    "max_retries": subtask.max_retries,
-                    "retry_delay": subtask.retry_delay,
-                }
-            raise TypeError(f"Unsupported subtask type: {type(subtask).__name__}")
+        payload = encode_draft(tuple(self._tasks.values()), self.robot_names, self.robot_homes)
+        if mission_id is None:
+            areas = tuple(self.areas.values())
+            mission_id = areas[0].uuid if areas else str(uuid4())
+        return {"type": payload["type"], "uuid": mission_id, "details": payload["details"]}
 
-        def point_to_json(point: PointLocal | PointGlobal, origin: tuple[float,float]):
-            if isinstance(point, PointLocal):
-                x, y, z = point.position
-                dx,dy = origin
-                x -= dx
-                y -= dy
-            elif isinstance(point, PointGlobal):
-                x, y, z = point.lat, point.lon, point.height
-            else:
-                raise TypeError(f"Unsupported point type: {type(point).__name__}")
-
-            point_json = {
-                "x": x,
-                "y": y,
-                "z": z,
-                "heading": point.heading,
-            }
-            if point.subtasks:
-                point_json["subtasks"] = [subtask_to_json(subtask) for subtask in point.subtasks]
-                if len(point.subtasks) > 1:
-                    point_json["parallel_execution"] = True
-            return point_json
-
-        if len(self._tasks) == 1:
-            task = next(iter(self._tasks.values()))
-            if isinstance(task, Coverage):
-                jrepr = {
-                    "type": "CoveragePlanner",
-                    "uuid": task.uuid,
-                    "details": {
-                        "robots": list(task.assigned_robots or self.robot_names),
-                        "search_area": [
-                            {"x": point[0], "y": point[1]}
-                            for point in task.points
-                        ],
-                        "height_id": task.height_id,
-                        "height": task.height,
-                        "terminal_action": 0,
-                    },
-                }
-                self.save_json(jrepr)
-                return jrepr
-
-        robots = []
-        for index, task in enumerate(self._tasks.values()):
-            if not isinstance(task, Waypoints):
-                continue
-
-            robot_name = task.assigned_robot
-            if robot_name is None and index < len(self.robot_names):
-                robot_name = self.robot_names[index]
-            if robot_name is None:
-                robot_name = ""
-
-            height_id = 0
-            frame_id = 0
-            if task.points and isinstance(task.points[0], PointGlobal):
-                height_id = task.points[0].height_id
-                frame_id = 1
-
-            robots.append({
-                "name": robot_name,
-                "frame_id": frame_id,
-                "height_id": height_id,
-                "points": [point_to_json(point, self.robot_homes[robot_name]) for point in task.points],
-                "terminal_action": 0,
-            })
-
-        jrepr = {
-            "type": "WaypointPlanner",
-            "uuid": str(uuid4()),
-            "details": {
-                "robots": robots,
-            },
-        }
-        self.save_json(jrepr)
-        return jrepr
+    def export_json(self, path: str | None = None) -> str:
+        """Write the collection to a mission file (the format POST /mission and the queues accept)."""
+        jrepr = self.to_json()
+        if path is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            path = f"mission_{timestamp}.json"
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump(jrepr, file, indent=2)
+        return path
 
     def from_json(self, jrepr: dict[str, Any]) -> None:
-        def subtask_from_json(value: dict[str, Any]) -> Subtask:
-            subtask_type = value["type"]
-            parameters = value["parameters"]
-            if subtask_type == "wait":
-                return SubtaskWait(parameters)
-            if subtask_type == "gimbal":
-                return SubtaskGimball(tuple(parameters))
-            if subtask_type == "gazebo_gimbal":
-                return SubtaskGazeboGimball(
-                    tuple(parameters),
-                    value.get("continue_without_waiting", False),
-                    value.get("stop_on_failure", False),
-                    value.get("max_retries", 1),
-                    value.get("retry_delay", 0.),
-                )
-            raise ValueError(f"Unsupported subtask type: {subtask_type}")
+        from holoswarm_client.iroc.mission_codec import decode_mission
 
-        mission_type = jrepr["type"]
-        details = jrepr["details"]
-        tasks: dict[str, MissionTask] = {}
-
-        if mission_type == "CoveragePlanner":
-            task = Coverage(
-                points=tuple((point["x"], point["y"]) for point in details["search_area"]),
-                time_interval=(0., 1.),
-                height_id=details["height_id"],
-                height=details["height"],
-                uuid=jrepr["uuid"],
-                assigned_robots=tuple(details.get("robots", ())),
-            )
-            tasks[task.uuid] = task
-        elif mission_type == "WaypointPlanner":
-            robots = details["robots"]
-            for index, robot in enumerate(robots):
-                robot_name = robot["name"]
-                height_id = robot["height_id"]
-                is_global = robot.get("frame_id", 0) == 1
-                origin_x, origin_y = self.robot_homes.get(robot_name, (0., 0.))
-                points = []
-                for value in robot["points"]:
-                    subtasks = tuple(
-                        subtask_from_json(subtask)
-                        for subtask in value.get("subtasks", ())
-                    )
-                    if is_global:
-                        point = PointGlobal(
-                            value["x"], value["y"], height_id, value["z"],
-                            value.get("heading", 0.), subtasks,
-                        )
-                    else:
-                        point = PointLocal(
-                            (value["x"] + origin_x, value["y"] + origin_y, value["z"]),
-                            value.get("heading", 0.), subtasks,
-                        )
-                    points.append(point)
-
-                task_uuid = jrepr["uuid"] if len(robots) == 1 else str(uuid4())
-                task = Waypoints(
-                    points=tuple(points),
-                    time_interval=(0., 1.),
-                    uuid=task_uuid,
-                    assigned_robot=robot_name,
-                )
-                tasks[task.uuid] = task
-        else:
-            raise ValueError(f"Unsupported mission type: {mission_type}")
-
-        self._tasks = tasks
+        self._tasks = {task.uuid: task for task in decode_mission(jrepr, self.robot_homes)}
         self._notify()

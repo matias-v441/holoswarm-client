@@ -7,6 +7,9 @@ from holoswarm_client.data.monitoring import Monitoring
 from holoswarm_client.gui.map.map import Map
 from holoswarm_client.gui.explorer.window import ExplorerWindow 
 from holoswarm_client.gui.mission.window import MissionWindow
+from holoswarm_client.data.execution import ExecutionStore
+from holoswarm_client.data.queue_draft import QueueDraft
+from holoswarm_client.services.queues import QueueService
 
 from holoswarm_client.gui.listeners.telemetry import TelemetryListener
 from holoswarm_client.gui.listeners.feedback import FeedbackListener
@@ -101,6 +104,11 @@ def main():
 
     client = IROCClient(server=f"{args.host}:{args.port}")
 
+    # Mission queues: kept by the bridge and mirrored here; the next queue is put together in the draft.
+    executions = ExecutionStore()
+    queue_draft = QueueDraft()
+    queue_service = QueueService(client, api_loop, executions, queue_draft)
+
     map = Map(
         mission=mission,
         session=session,
@@ -113,10 +121,10 @@ def main():
     map_window = MapGridWindow(map, client, api_loop)
     map_window.add()
 
-    explorer = ExplorerWindow(mission, session, client, api_loop)
+    explorer = ExplorerWindow(mission, session, queue_draft)
     explorer.add()
 
-    mission_window = MissionWindow(monitoring, client, api_loop)
+    mission_window = MissionWindow(queue_service, executions, queue_draft)
     mission_window.add()
 
     robots: list[UAVWindow] = []
@@ -128,8 +136,11 @@ def main():
     telemetry = TelemetryListener(monitoring, client, api_loop)
     telemetry.start()
 
+    # Per-robot feedback of the legacy single-mission path; queue state comes from the queue service.
     feedback = FeedbackListener(monitoring, client, api_loop)
     feedback.start()
+
+    queue_service.start()
 
     if args.mission_path:
         mission.from_json(json.loads(Path(args.mission_path).read_bytes()))
@@ -145,9 +156,11 @@ def main():
                 uav.process_events()
                 uav.process_events()
             explorer.process_events()
+            queue_service.process_events()
             mission_window.process_events()
             dpg.render_dearpygui_frame()
     finally:
+        queue_service.stop()
         telemetry.stop()
         feedback.stop()
         dpg.save_init_file(user_layout_file)

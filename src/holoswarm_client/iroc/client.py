@@ -2,7 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Any, AsyncIterator
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 import httpx
 import websockets
 
@@ -10,6 +10,11 @@ import websockets
 DEFAULT_SERVER = "localhost:8080"
 MISSION_STATES = ("start", "pause", "stop")
 COMMANDS = ("takeoff", "hover", "land", "home", "land_home")
+QUEUE_COMMANDS = ("start", "cancel", "pause", "resume")
+
+# The fleet manager gives up on a queue request after 30 s; wait longer so that a slow but
+# successful request is not reported as an unknown outcome.
+QUEUE_TIMEOUT = 40.0
 
 API = """
 HTTP:
@@ -26,10 +31,19 @@ HTTP:
   POST /robots/{robot_name}/mission/{start|pause|stop}
   POST /robots/{takeoff|hover|land|home|land_home}
   POST /robots/{robot_name}/{takeoff|hover|land|home|land_home}
+  GET    /schedulers
+  GET    /queues
+  GET    /queues/{queue_id}
+  POST   /queues                          {"scheduler": string, "missions": [{"type": string, "details": object, "id": string?, "name": string?}],
+                                           "queue_id": string?, "name": string?, "params": object?, "world_id": string?}
+  DELETE /queues/{queue_id}
+  POST   /queues/{queue_id}/submit
+  POST   /queues/{queue_id}/{start|cancel|pause|resume}
 
 WebSocket:
   /telemetry
   /mission/feedback
+  /queues/events
   /rc                                   send {"command": "message", "data": string}
   /rc                                   send {"command": "move", "robot_name": string, "data": {"x": -1..1, "y": -1..1, "z": -1..1, "heading": -1..1}}
 """
@@ -46,6 +60,28 @@ def _check_choice(value: str, choices: tuple[str, ...], label: str) -> None:
     if value not in choices:
         joined = ", ".join(choices)
         raise ValueError(f"Unknown {label} {value!r}. Expected one of: {joined}")
+
+
+class ApiError(Exception):
+    """The server answered and refused the request."""
+
+    def __init__(self, status: int, message: str, body: Any = None) -> None:
+        super().__init__(f"HTTP {status}: {message}")
+        self.status = status
+        self.message = message
+        self.body = body
+
+
+class ApiUnavailable(ApiError):
+    """The bridge is up but the fleet manager did not answer (503). Nothing was applied."""
+
+
+def _path(queue_id: str) -> str:
+    return f"/queues/{quote(queue_id, safe='')}"
+
+
+class TransportError(Exception):
+    """No answer (timeout, disconnect). The request may or may not have been applied."""
 
 
 class IROCClient:
@@ -147,6 +183,98 @@ class IROCClient:
     async def home(self, robot_name: str | None = None) -> httpx.Response:
         return await self.command("home", robot_name)
 
+    # | ----------------------- mission queues ----------------------- |
+
+    async def _request_json(
+        self,
+        method: str,
+        endpoint: str,
+        payload: dict[str, Any] | None = None,
+        timeout: float = QUEUE_TIMEOUT,
+    ) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(base_url=self.base_url, timeout=timeout) as client:
+                response = await client.request(method, endpoint, json=payload)
+        except httpx.TransportError as exc:
+            raise TransportError(f"{method} {endpoint}: {type(exc).__name__}: {exc}") from exc
+
+        try:
+            body = response.json()
+        except json.JSONDecodeError:
+            body = None
+
+        if response.is_error:
+            message = body.get("message") if isinstance(body, dict) else None
+            message = message or response.text or response.reason_phrase
+            error = ApiUnavailable if response.status_code == 503 else ApiError
+            raise error(response.status_code, message, body)
+
+        if not isinstance(body, dict):
+            raise ApiError(response.status_code, f"Unexpected response to {method} {endpoint}: {response.text[:200]}")
+        return body
+
+    async def schedulers(self) -> list[str]:
+        body = await self._request_json("GET", "/schedulers")
+        schedulers = body.get("schedulers")
+        if not isinstance(schedulers, list):
+            raise ApiError(200, "Malformed /schedulers response", body)
+        return [str(name) for name in schedulers]
+
+    async def queues(self) -> dict[str, Any]:
+        body = await self._request_json("GET", "/queues")
+        if not isinstance(body.get("queues"), list) or "session_id" not in body:
+            raise ApiError(200, "Malformed /queues response", body)
+        return body
+
+    async def queue(self, queue_id: str) -> dict[str, Any]:
+        return self._queue_of(await self._request_json("GET", _path(queue_id)))
+
+    async def create_queue(
+        self,
+        scheduler: str,
+        missions: list[dict[str, Any]],
+        queue_id: str | None = None,
+        name: str | None = None,
+        params: dict[str, Any] | None = None,
+        world_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Store a queue with all of its missions on the bridge. Returns the queue."""
+        payload: dict[str, Any] = {"scheduler": scheduler, "missions": missions}
+        if queue_id:
+            payload["queue_id"] = queue_id
+        if name:
+            payload["name"] = name
+        if params:
+            payload["params"] = params
+        if world_id:
+            payload["world_id"] = world_id
+        return self._queue_of(await self._request_json("POST", "/queues", payload))
+
+    async def delete_queue(self, queue_id: str) -> None:
+        await self._request_json("DELETE", _path(queue_id))
+
+    async def submit_queue(self, queue_id: str) -> dict[str, Any]:
+        """Hand the queue to the fleet manager, which stages its first step. Returns the queue."""
+        return self._queue_of(await self._request_json("POST", f"{_path(queue_id)}/submit"))
+
+    async def control_queue(self, queue_id: str, command: str) -> dict[str, Any]:
+        _check_choice(command, QUEUE_COMMANDS, "queue command")
+        return await self._request_json("POST", f"{_path(queue_id)}/{command}")
+
+    async def queue_events(self) -> AsyncIterator[dict[str, Any]]:
+        """Queue changes: {"type": "queue", "queue": {...}} or {"type": "queue_removed", "queue_id"}, with session_id and seq."""
+        async for message in self.websocket_messages("/queues/events"):
+            event = json.loads(message)
+            if isinstance(event, dict) and event.get("type") in ("queue", "queue_removed"):
+                yield event
+
+    @staticmethod
+    def _queue_of(body: dict[str, Any]) -> dict[str, Any]:
+        queue = body.get("queue")
+        if not isinstance(queue, dict):
+            raise ApiError(200, "Malformed queue response", body)
+        return queue
+
     async def websocket_messages(self, endpoint: str) -> AsyncIterator[str]:
         url = f"{self.ws_base_url}/{endpoint.lstrip('/')}"
         async with websockets.connect(url) as websocket:
@@ -221,6 +349,24 @@ async def main() -> None:
     command_parser.add_argument("command_type", choices=COMMANDS)
     command_parser.add_argument("robot_name", nargs="?")
 
+    subparsers.add_parser("queues", help="Print all mission queues")
+
+    queue_create_parser = subparsers.add_parser("queue-create", help="Create a queue from mission JSON files (in execution order)")
+    queue_create_parser.add_argument("json_paths", nargs="+")
+    queue_create_parser.add_argument("--scheduler", default="batch")
+    queue_create_parser.add_argument("--queue-id")
+    queue_create_parser.add_argument("--name")
+
+    queue_submit_parser = subparsers.add_parser("queue-submit", help="Hand a queue to the fleet manager (stages its first step)")
+    queue_submit_parser.add_argument("queue_id")
+
+    queue_delete_parser = subparsers.add_parser("queue-delete", help="Remove a queue")
+    queue_delete_parser.add_argument("queue_id")
+
+    queue_control_parser = subparsers.add_parser("queue", help="Show or control a mission queue")
+    queue_control_parser.add_argument("queue_id")
+    queue_control_parser.add_argument("queue_command", nargs="?", choices=QUEUE_COMMANDS)
+
     ws_parser = subparsers.add_parser("ws", help="Print messages from a websocket endpoint")
     ws_parser.add_argument("endpoint")
 
@@ -249,6 +395,21 @@ async def main() -> None:
         print_response(await client.robot_mission(args.robot_name, args.state))
     elif args.command == "command":
         print_response(await client.command(args.command_type, args.robot_name))
+    elif args.command == "queues":
+        print(json.dumps(await client.queues(), indent=2))
+    elif args.command == "queue-create":
+        missions = [json.loads(Path(path).read_text(encoding="utf-8")) for path in args.json_paths]
+        print(json.dumps(await client.create_queue(args.scheduler, missions, queue_id=args.queue_id, name=args.name), indent=2))
+    elif args.command == "queue-submit":
+        print(json.dumps(await client.submit_queue(args.queue_id), indent=2))
+    elif args.command == "queue-delete":
+        await client.delete_queue(args.queue_id)
+        print(f"Removed {args.queue_id}")
+    elif args.command == "queue":
+        if args.queue_command:
+            print(json.dumps(await client.control_queue(args.queue_id, args.queue_command), indent=2))
+        else:
+            print(json.dumps(await client.queue(args.queue_id), indent=2))
     elif args.command == "ws":
         async for message in client.websocket_messages(args.endpoint):
             print(message)

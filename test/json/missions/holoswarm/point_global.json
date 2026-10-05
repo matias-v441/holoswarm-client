@@ -1,0 +1,1 @@
+{"type": "WaypointPlanner", "uuid": "48a17404-c754-47b6-a890-842f34fa8f5a", "details": {"robots": [{"name": "uav14", "frame_id": 1, "height_id": 0, "points": [{"x": 49.36260115379088, "y": 14.260573236123772, "z": 5.0, "heading": 0.0}], "terminal_action": 0}]}}

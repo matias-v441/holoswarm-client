@@ -108,25 +108,3 @@ class CuzkOrtofotoClient:
             )
         response.raise_for_status()
         return response.text
-
-
-# if __name__ == "__main__":
-#     client = CuzkOrtofotoClient()
-# 
-#     # Prague city center
-#     lat = 50.0755
-#     lon = 14.4378
-# 
-#     path = client.get_square_image(
-#         lon=lon,
-#         lat=lat,
-#         size_m=300,      # 300m x 300m square
-#         pixels=768,      # 768px x 768px image
-#         output_path="prague_ortofoto.png",
-#     )
-# 
-#     print(f"Saved image to: {path}")
-# 
-#     # Optional: verify it opens
-#     img = Image.open(path)
-#     print(img.size, img.mode) 

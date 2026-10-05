@@ -7,17 +7,21 @@ name = "holoswarm_client"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+  "PyYAML",
   "dearpygui",
   "screeninfo",
   "httpx",
   "websockets",
   "pyproj",
   "Pillow",
-  "numpy"
+  "numpy",
+  "matplotlib",
+  "rasterio"
 ]
 
 [project.scripts]
 holoswarm-client = "holoswarm_client.app:main"
+cuzk = "cuzk.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

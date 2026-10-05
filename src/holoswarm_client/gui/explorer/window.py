@@ -3,11 +3,9 @@ from holoswarm_client.data.mission import *
 from holoswarm_client.data.session import *
 from holoswarm_client.gui.explorer.items.waypoints import WaypointsNode
 from holoswarm_client.gui.explorer.items.coverage import CoverageNode
-from holoswarm_client.iroc.client import IROCClient
+from holoswarm_client.data.queue_draft import QueueDraft
+from holoswarm_client.iroc.mission_codec import CodecError, describe, encode_draft
 
-from dataclasses import replace
-import asyncio
-from asyncio import AbstractEventLoop
 from queue import SimpleQueue, Empty
 
 class ExplorerWindow:
@@ -16,8 +14,7 @@ class ExplorerWindow:
             self,
             mission: Mission,
             session: Session,
-            client: IROCClient,
-            api_loop: AbstractEventLoop,
+            queue_draft: QueueDraft,
             tag: str = "explorer"
     ) -> None:
         self.tag = tag
@@ -25,8 +22,7 @@ class ExplorerWindow:
         self.mission = mission
         self.session = session
         self.tracked_items: dict[str,WaypointsNode | CoverageNode] = {}
-        self.client = client
-        self.api_loop = api_loop
+        self.queue_draft = queue_draft
         self._ui_events = SimpleQueue()
         self.response_text_tag = f"{self.window_tag}_response"
 
@@ -37,7 +33,10 @@ class ExplorerWindow:
             tag=self.window_tag
         ):
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Upload mission", callback=self._upload_mission)
+                dpg.add_button(label="Add to queue", tag=f"{self.window_tag}_add", callback=self._add_to_queue)
+                with dpg.tooltip(f"{self.window_tag}_add"):
+                    dpg.add_text("Freeze the current paths or area as the next mission of the new queue (Mission window).")
+                dpg.add_button(label="Export JSON", callback=self._export)
             dpg.add_text("",tag=self.response_text_tag)
             self._draw_items_tree()
 
@@ -68,21 +67,20 @@ class ExplorerWindow:
             self.tracked_items[wp.uuid] = wp_node
             wp_node.draw()
 
-    def _upload_mission(self):
-        mission_json = self.mission.to_json()
-        print(mission_json)
-        future = asyncio.run_coroutine_threadsafe(self.client.upload_mission(mission_json), self.api_loop)
-        def on_mission_uploaded(future):
-            try:
-                res = future.result()
-                print("result:", res)
-                def show_result():
-                    dpg.set_value(self.response_text_tag, str(res))
-                self._ui_events.put(show_result)
-            except Exception as e:
-                error = str(e)
-                print("error: ", error)
-                def show_result():
-                    dpg.set_value(self.response_text_tag, error)
-                self._ui_events.put(show_result)
-        future.add_done_callback(on_mission_uploaded)
+    def _add_to_queue(self):
+        # The whole collection is one mission; content that does not fit is refused, never dropped.
+        try:
+            payload = encode_draft(tuple(self.mission.tasks.values()), self.mission.robot_names, self.mission.robot_homes)
+        except CodecError as e:
+            dpg.set_value(self.response_text_tag, f"Cannot add: {e}")
+            return
+        added = self.queue_draft.add(payload, describe(payload))
+        dpg.set_value(self.response_text_tag, f"Added '{added.name}' as mission {len(self.queue_draft)} of the new queue")
+
+    def _export(self):
+        try:
+            path = self.mission.export_json()
+        except (CodecError, OSError) as e:
+            dpg.set_value(self.response_text_tag, f"Cannot export: {e}")
+            return
+        dpg.set_value(self.response_text_tag, f"Exported to {path}")
