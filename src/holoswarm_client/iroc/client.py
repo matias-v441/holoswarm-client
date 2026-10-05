@@ -31,6 +31,7 @@ HTTP:
   POST /robots/{robot_name}/mission/{start|pause|stop}
   POST /robots/{takeoff|hover|land|home|land_home}
   POST /robots/{robot_name}/{takeoff|hover|land|home|land_home}
+  GET    /terrain/height?lat=deg&lon=deg  terrain height (amsl, dataset datum) and UTM coordinates of a point
   GET    /workspaces
   GET    /workspaces/{name}               worlds (safety areas, origins), map bounds, stored queues
   GET    /workspaces/{name}/map?max_px=N  orthophoto of the workspace as JPEG (X-Map-Bounds: west,south,east,north)
@@ -194,10 +195,11 @@ class IROCClient:
         endpoint: str,
         payload: dict[str, Any] | None = None,
         timeout: float = QUEUE_TIMEOUT,
+        params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             async with httpx.AsyncClient(base_url=self.base_url, timeout=timeout) as client:
-                response = await client.request(method, endpoint, json=payload)
+                response = await client.request(method, endpoint, json=payload, params=params)
         except httpx.TransportError as exc:
             raise TransportError(f"{method} {endpoint}: {type(exc).__name__}: {exc}") from exc
 
@@ -273,6 +275,13 @@ class IROCClient:
             event = json.loads(message)
             if isinstance(event, dict) and event.get("type") in ("queue", "queue_removed"):
                 yield event
+
+    # | ----------------------- terrain ----------------------- |
+
+    async def terrain_height(self, lat: float, lon: float) -> dict[str, Any]:
+        """{"lat", "lon", "valid", "amsl": float | None, "utm": {"zone", "x", "y"}} of a WGS84 point."""
+        return await self._request_json("GET", "/terrain/height", params={"lat": repr(lat), "lon": repr(lon)},
+                                        timeout=self.timeout)
 
     # | ----------------------- workspaces ----------------------- |
 
@@ -408,6 +417,10 @@ async def main() -> None:
     queue_control_parser.add_argument("queue_id")
     queue_control_parser.add_argument("queue_command", nargs="?", choices=QUEUE_COMMANDS)
 
+    terrain_parser = subparsers.add_parser("terrain-height", help="Terrain height and UTM coordinates of a point")
+    terrain_parser.add_argument("lat", type=float)
+    terrain_parser.add_argument("lon", type=float)
+
     ws_parser = subparsers.add_parser("ws", help="Print messages from a websocket endpoint")
     ws_parser.add_argument("endpoint")
 
@@ -452,6 +465,8 @@ async def main() -> None:
             print(json.dumps(await client.control_queue(args.queue_id, args.queue_command), indent=2))
         else:
             print(json.dumps(await client.queue(args.queue_id), indent=2))
+    elif args.command == "terrain-height":
+        print(json.dumps(await client.terrain_height(args.lat, args.lon), indent=2))
     elif args.command == "ws":
         async for message in client.websocket_messages(args.endpoint):
             print(message)

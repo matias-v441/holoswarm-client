@@ -23,7 +23,7 @@ from PIL import Image
 
 from holoswarm_client.iroc.client import ApiError, ApiUnavailable, IROCClient
 
-from stack import BRIDGE, STACK, Environment, route
+from stack import BRIDGE, STACK, Environment, route, wait_sampler
 
 MISSIONS_DIR = Path(__file__).resolve().parents[1] / "json" / "missions"
 ENV: Environment | None = None
@@ -520,6 +520,52 @@ class WorkspaceTest(QueueTestCase):
         await self.assert_refused(404, self.client.workspace_map("nowhere"))
         error = await self.assert_refused(400, self.create(self.routes(1), workspace="nowhere"))
         self.assertIn("nowhere", error.message)
+
+
+class TerrainTest(QueueTestCase):
+    """Terrain height and UTM coordinates of a point (bridge -> heightmap_sampler node)."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await asyncio.to_thread(wait_sampler)
+
+    async def test_simulator_origin(self):
+        # The GNSS origin of the simulator (compose/simulation/config/hw_api.yaml: utm_zone "33U", utm_x 473864.74,
+        # utm_y 5548732.22, amsl 300.0) is the origin of config/worlds/world_bechovice.yaml.
+        point = await self.client.terrain_height(50.090278, 14.634639)
+        self.assertEqual((point["lat"], point["lon"]), (50.090278, 14.634639))
+        self.assertEqual(point["utm"]["zone"], "33U")
+        self.assertAlmostEqual(point["utm"]["x"], 473864.74, delta=0.01)
+        self.assertAlmostEqual(point["utm"]["y"], 5548732.22, delta=0.01)
+        self.assertTrue(point["valid"])
+        self.assertAlmostEqual(point["amsl"], 300.0, delta=0.1)
+
+    async def test_known_heights(self):
+        # as `ros2 run heightmap_sampler sample_height LON LAT` gives them (bundled dataset, WGS84 ellipsoid)
+        for lat, lon, height in ((50.0905258, 14.6327381, 303.905), (49.3625695, 14.2619165, 451.769)):
+            point = await self.client.terrain_height(lat, lon)
+            self.assertTrue(point["valid"], point)
+            self.assertAlmostEqual(point["amsl"], height, delta=0.01)
+
+    async def test_no_height_outside_the_dataset(self):
+        point = await self.client.terrain_height(0.0, 0.0)
+        self.assertFalse(point["valid"])
+        self.assertIsNone(point["amsl"])
+        self.assertIn("zone", point["utm"])
+
+    async def test_bad_coordinates(self):
+        async with httpx.AsyncClient(base_url=f"http://{BRIDGE}", timeout=10) as http:
+            for query in ("lon=14.2", "lat=abc&lon=14.2", "lat=95&lon=14.2", "lat=49&lon=181", "lat=49.1x&lon=14"):
+                response = await http.get(f"/terrain/height?{query}")
+                self.assertEqual(response.status_code, 400, query)
+
+    async def test_sampler_down(self):
+        await asyncio.to_thread(STACK.stop_sampler)
+        try:
+            await self.assert_refused(503, self.client.terrain_height(50.0905258, 14.6327381))
+        finally:
+            await asyncio.to_thread(STACK.start_sampler)
+        self.assertTrue((await self.client.terrain_height(50.0905258, 14.6327381))["valid"])
 
 
 class BridgeRestartTest(QueueTestCase):

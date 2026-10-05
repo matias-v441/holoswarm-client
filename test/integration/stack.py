@@ -29,6 +29,7 @@ COMPOSE_DIR = Path(os.environ.get("HOLOSWARM_COMPOSE_DIR", Path(__file__).resolv
 BRIDGE = "127.0.0.1:8080"
 FLEET_MANAGER_CONTAINER = "ground-fleet_manager-1"
 BRIDGE_CONTAINER = "ground-iroc_bridge-1"
+SAMPLER_CONTAINER = "ground-heightmap_sampler-1"
 # The bridge stores queues in a database of its own during tests, never in the operator's
 # (compose/testing/bridge_test.yaml; ROOT/.assets is /var/lib/holoswarm/assets in the containers).
 BRIDGE_TEST_CONFIG = "./compose/testing/bridge_test.yaml"
@@ -93,6 +94,10 @@ def wait_until(condition, timeout: float, what: str, period: float = 0.5) -> Non
         if time.time() > deadline:
             raise TimeoutError(f"{what} not within {timeout:.0f} s")
         time.sleep(period)
+
+
+def wait_sampler(timeout: float = 60.0) -> None:
+    wait_until(lambda: _http_ok("/terrain/height?lat=0&lon=0"), timeout, "heightmap sampler answering through the bridge")
 
 
 def wait_fleet_manager(timeout: float = 60.0) -> None:
@@ -218,6 +223,13 @@ class Stack:
         subprocess.run(["docker", "restart", BRIDGE_CONTAINER], capture_output=True, check=True)
         wait_until(lambda: _http_ok("/queues"), 60, "bridge after restart")
         wait_fleet_manager()
+
+    def stop_sampler(self) -> None:
+        subprocess.run(["docker", "stop", SAMPLER_CONTAINER], capture_output=True, check=True)
+
+    def start_sampler(self) -> None:
+        subprocess.run(["docker", "start", SAMPLER_CONTAINER], capture_output=True, check=True)
+        wait_sampler()
 
     def stop_fleet_manager(self) -> None:
         subprocess.run(["docker", "stop", FLEET_MANAGER_CONTAINER], capture_output=True, check=True)

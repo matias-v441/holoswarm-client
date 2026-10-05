@@ -2,6 +2,7 @@ import dearpygui.dearpygui as dpg
 from holoswarm_client.gui.map.handlers.map_grid import MapGridHandlers
 from holoswarm_client.gui.map.handlers.waypoints import WaypointsHandlers
 from holoswarm_client.gui.map.handlers.coverage import CoverageHandlers
+from holoswarm_client.gui.map.handlers.cursor import CursorHandlers
 from holoswarm_client.gui.map.map import Map, ToolType
 
 Point = tuple[float,float]
@@ -11,12 +12,14 @@ class Controller:
     def __init__(self, map: Map, drawlist_tag: str, *,
             map_grid: MapGridHandlers,
             waypoints: WaypointsHandlers,
-            coverage: CoverageHandlers
+            coverage: CoverageHandlers,
+            cursor: CursorHandlers
         ):
 
         self.map_grid = map_grid
         self.waypoints = waypoints
         self.coverage = coverage
+        self.cursor = cursor
         self.drawlist_tag = drawlist_tag
         self.map = map
 
@@ -27,6 +30,7 @@ class Controller:
             dpg.add_mouse_wheel_handler(callback=self._on_wheel)
 
         self.mouse_left_down = False
+        self._last_mouse: Point | None = None
 
     def _local_mouse_pos(self, mouse_pos: Point) -> Point:
         item_min = dpg.get_item_rect_min(self.drawlist_tag)
@@ -43,6 +47,8 @@ class Controller:
             consumed = self.waypoints.on_down(mouse_pos)
         elif self.map.active_tool == ToolType.COVERAGE:
             consumed = self.coverage.on_down(mouse_pos)
+        elif self.map.active_tool == ToolType.CURSOR:
+            consumed = self.cursor.on_down(mouse_pos)
         else:
             consumed = False
         if not consumed:
@@ -54,6 +60,14 @@ class Controller:
     def _on_left_release(self):
         self.mouse_left_down = False
         self.map_grid.on_release()
+        self.cursor.on_release(self._local_mouse_pos(dpg.get_mouse_pos(local=False)))
+
+    def poll_mouse(self):
+        """Called every frame: a mouse move handler would be a new dpg item and shift the ids the saved layout refers to."""
+        mouse = self._local_mouse_pos(dpg.get_mouse_pos(local=False))
+        if mouse != self._last_mouse:
+            self._last_mouse = mouse
+            self.cursor.on_move(mouse)
 
     def _on_wheel(self, sender=None, app_data=None, user_data=None):
         mouse_pos = self._local_mouse_pos(dpg.get_mouse_pos(local=False))

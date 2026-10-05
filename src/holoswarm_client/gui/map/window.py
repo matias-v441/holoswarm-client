@@ -11,6 +11,8 @@ from holoswarm_client.gui.map.controller import Controller
 from holoswarm_client.gui.map.handlers.map_grid import MapGridHandlers
 from holoswarm_client.gui.map.handlers.waypoints import WaypointsHandlers
 from holoswarm_client.gui.map.handlers.coverage import CoverageHandlers
+from holoswarm_client.gui.map.handlers.cursor import CursorHandlers
+from holoswarm_client.gui.map.point_info import PointInfoWindow
 from holoswarm_client.gui.map.views.waypoint import WaypointPrimitive
 from holoswarm_client.gui.map.views.coverage import CoveragePrimitive
 from holoswarm_client.gui.map.views.fleet import Fleet
@@ -61,10 +63,13 @@ class MapGridWindow:
 
         self.client = client
         self.map = map
+        self.point_info = PointInfoWindow(client, api_loop)
+        self.cursor = CursorHandlers(self.map, self.drawlist_tag, self.point_info.show)
         self.controller = Controller(self.map, self.drawlist_tag,
             map_grid=MapGridHandlers(self.map, self.drawlist_tag, lambda: self._ui_events.put(self._draw)),
             waypoints=WaypointsHandlers(self.map, self.drawlist_tag),
-            coverage=CoverageHandlers(self.map, self.drawlist_tag)
+            coverage=CoverageHandlers(self.map, self.drawlist_tag),
+            cursor=self.cursor
             )
         map.mission.subscribe(self._mission_callback)
 
@@ -105,7 +110,7 @@ class MapGridWindow:
                     items=[tool.value for tool in ToolType],
                     default_value=self.map.active_tool.value,
                     width=100,
-                    callback=lambda _sender, value: setattr(self.map, "active_tool", ToolType(value)),
+                    callback=lambda _sender, value: self._tool_picked(ToolType(value)),
                 )
                 dpg.add_text(self.info_text(), tag=self.info_tag)
             dpg.add_drawlist(width=-1, height=-1, tag=self.drawlist_tag)
@@ -259,6 +264,8 @@ class MapGridWindow:
             event.__call__()
         self.safety_area.process_events()
         self.fleet.process_events()
+        self.point_info.process_events()
+        self.controller.poll_mouse()
 
     def load_texture(self) -> None:
         image = Image.open(BytesIO(self._map_image_bytes)).convert("RGBA")
@@ -318,6 +325,11 @@ class MapGridWindow:
         self.safety_area.world = self.workspace_data.world(self.map.world_name) if self.workspace_data else None
         self.safety_area.world_active = self.map.world_name in self.active_worlds
         self.safety_area.draw()
+        self.cursor.draw()
+
+    def _tool_picked(self, tool: ToolType) -> None:
+        self.map.active_tool = tool
+        self.cursor.draw()  # the cursor label shows with the cursor tool only
 
     def draw_map_image(self, width: int, height: int) -> None:
         if not self.texture_loaded or self.image_bounds is None:

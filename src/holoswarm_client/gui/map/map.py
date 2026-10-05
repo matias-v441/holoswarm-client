@@ -11,6 +11,7 @@ Point = tuple[float,float]
 class ToolType(Enum):
     WAYPOINT = "waypoint"
     COVERAGE = "coverage"
+    CURSOR = "cursor"
 
 @dataclass 
 class Map:
