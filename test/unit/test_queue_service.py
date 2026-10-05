@@ -31,8 +31,9 @@ class FakeClient:
         if failures:
             raise failures.pop(0)
 
-    async def create_queue(self, scheduler, missions, queue_id=None, name=None, params=None, world_id=None):
+    async def create_queue(self, scheduler, missions, queue_id=None, name=None, params=None, world_id=None, workspace=None):
         await self._enter("create_queue", scheduler, missions, queue_id, name, params)
+        self.workspaces_used = getattr(self, "workspaces_used", []) + [workspace]
         queue = {"queue_id": queue_id, "scheduler": scheduler, "missions": missions}
         self.queues_stored[queue_id] = queue
         return queue
@@ -110,6 +111,21 @@ class QueueServiceTest(unittest.TestCase):
         self.assertEqual(len(self.draft), 0, "the draft is emptied once the bridge has the queue")
         self.assertTrue(self.messages[-1][1])
         self.assertNotIn(CREATING, self.service.pending)
+
+    def test_create_stores_the_queue_in_the_workspace(self):
+        service = QueueService(self.client, self.loop, self.executions, self.draft, workspace="temesvar")
+        self.fill_draft()
+        self.assertTrue(self.run_op_with(service, service.create("batch")))
+        self.assertEqual(self.client.workspaces_used, ["temesvar"])
+
+        self.fill_draft()
+        self.run_op(self.service.create("batch"))
+        self.assertEqual(self.client.workspaces_used[-1], None, "no workspace given: the bridge's default")
+
+    def run_op_with(self, service, future):
+        result = future.result(timeout=5)
+        service.process_events()
+        return result
 
     def test_create_with_empty_draft(self):
         self.assertIsNone(self.service.create("batch"))

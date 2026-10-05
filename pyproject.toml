@@ -12,7 +12,6 @@ dependencies = [
   "screeninfo",
   "httpx",
   "websockets",
-  "pyproj",
   "Pillow",
   "numpy",
   "matplotlib",
@@ -21,7 +20,6 @@ dependencies = [
 
 [project.scripts]
 holoswarm-client = "holoswarm_client.app:main"
-cuzk = "cuzk.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

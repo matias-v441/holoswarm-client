@@ -55,9 +55,9 @@ def main():
     )
 
     parser.add_argument(
-        "--location",
-        default="",
-        help="Location name",
+        "--workspace",
+        default="temesvar",
+        help="Workspace on the bridge: its worlds and map are shown and new queues are stored in it",
     )
 
     parser.add_argument(
@@ -95,30 +95,20 @@ def main():
     session = Session()
     monitoring = Monitoring()
 
-
-    config = json.loads((args.config_dir / "settings.json").read_bytes())
-    location = args.location
-    if not location:
-        location = config["current_location"]
-    origin_lat, origin_lon = config["locations"][location]
-
     client = IROCClient(server=f"{args.host}:{args.port}")
 
     # Mission queues: kept by the bridge and mirrored here; the next queue is put together in the draft.
     executions = ExecutionStore()
     queue_draft = QueueDraft()
-    queue_service = QueueService(client, api_loop, executions, queue_draft)
+    queue_service = QueueService(client, api_loop, executions, queue_draft, workspace=args.workspace)
 
+    # The origin is the selected world's, once the workspace is loaded from the bridge.
     map = Map(
         mission=mission,
         session=session,
         monitoring=monitoring,
-        origin_lat=origin_lat,
-        origin_lon=origin_lon,
-        location_name=location,
-        cache_dir=str(data_dir)
     )
-    map_window = MapGridWindow(map, client, api_loop)
+    map_window = MapGridWindow(map, client, api_loop, workspace=args.workspace)
     map_window.add()
 
     explorer = ExplorerWindow(mission, session, queue_draft)

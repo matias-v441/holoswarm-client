@@ -28,6 +28,11 @@ import websockets
 COMPOSE_DIR = Path(os.environ.get("HOLOSWARM_COMPOSE_DIR", Path(__file__).resolve().parents[3] / "compose"))
 BRIDGE = "127.0.0.1:8080"
 FLEET_MANAGER_CONTAINER = "ground-fleet_manager-1"
+BRIDGE_CONTAINER = "ground-iroc_bridge-1"
+# The bridge stores queues in a database of its own during tests, never in the operator's
+# (compose/testing/bridge_test.yaml; ROOT/.assets is /var/lib/holoswarm/assets in the containers).
+BRIDGE_TEST_CONFIG = "./compose/testing/bridge_test.yaml"
+TEST_DB = COMPOSE_DIR.parent / ".assets" / "test.sqlite"
 STACK_CONTAINER = re.compile(r"^(ground|sim|uav\d+)-")
 
 
@@ -171,7 +176,10 @@ class Stack:
         self.env = env
         print(f"\n[stack] {' '.join(f'{k}={v!r}' for k, v in env.env.items())} ./up.sh {env.mode}", flush=True)
         self.started = True
-        result = subprocess.run(["./up.sh", env.mode], cwd=COMPOSE_DIR, env={**os.environ, **env.env}, capture_output=True, text=True)
+        for path in (TEST_DB, TEST_DB.with_name(TEST_DB.name + "-wal"), TEST_DB.with_name(TEST_DB.name + "-shm")):
+            path.unlink(missing_ok=True)  # every run starts without stored queues
+        result = subprocess.run(["./up.sh", env.mode], cwd=COMPOSE_DIR, env={**os.environ, **env.env, "BRIDGE_CUSTOM_CONFIG": BRIDGE_TEST_CONFIG},
+                                capture_output=True, text=True)
         if result.returncode != 0:
             self.stop()
             raise RuntimeError(f"up.sh {env.mode} failed:\n{result.stdout}\n{result.stderr}")
@@ -203,6 +211,12 @@ class Stack:
 
     def restart_fleet_manager(self) -> None:
         subprocess.run(["docker", "restart", FLEET_MANAGER_CONTAINER], capture_output=True, check=True)
+        wait_fleet_manager()
+
+    def restart_bridge(self) -> None:
+        """Restart the bridge container: it loads its stored queues again."""
+        subprocess.run(["docker", "restart", BRIDGE_CONTAINER], capture_output=True, check=True)
+        wait_until(lambda: _http_ok("/queues"), 60, "bridge after restart")
         wait_fleet_manager()
 
     def stop_fleet_manager(self) -> None:

@@ -1,12 +1,10 @@
 from collections.abc import Callable
-from pathlib import Path
 from PIL import Image
 from io import BytesIO
 import numpy as np
 from math import floor
 import dearpygui.dearpygui as dpg
 
-from holoswarm_client.cuzk.client import CuzkOrtofotoClient
 from holoswarm_client.data.mission import Mission
 from holoswarm_client.gui.map.map import Map, ToolType
 from holoswarm_client.gui.map.controller import Controller
@@ -21,7 +19,8 @@ import asyncio
 from asyncio import AbstractEventLoop
 from queue import SimpleQueue, Empty
 
-from holoswarm_client.iroc.client import IROCClient
+from holoswarm_client.data.workspace import Workspace
+from holoswarm_client.iroc.client import ApiError, ApiUnavailable, IROCClient
 
 Point = tuple[float, float]
 
@@ -31,6 +30,7 @@ class MapGridWindow:
         map: Map,
         client: IROCClient,
         api_loop: AbstractEventLoop,
+        workspace: str = "temesvar",
         tag: str = "map_grid"
     ) -> None:
         self.tag = tag
@@ -39,14 +39,18 @@ class MapGridWindow:
         self.texture_registry_tag = f"{tag}_textures"
         self.texture_tag = f"{tag}_map_texture"
         self.info_tag = f"{tag}_info"
-        self.edit_button_tag = f"{tag}_edit_button"
-        self.edit_window_tag = f"{tag}_edit_window"
-        self.origin_lat_input_tag = f"{tag}_origin_lat_input"
-        self.origin_lon_input_tag = f"{tag}_origin_lon_input"
-        self.image_size_input_tag = f"{tag}_image_size_input"
+        self.world_combo_tag = f"{tag}_world_combo"
         self.handler_tag = f"{tag}_handlers"
 
-        self.image_size_m = 1000.
+        # The background is the workspace's orthophoto, served by the bridge (not stored locally).
+        self.workspace = workspace
+        # The workspace's worlds (from the bridge); the map shows the selected one, in its origin.
+        self.workspace_data: Workspace | None = None
+        self.workspace_error: str | None = None
+        self.active_worlds: list[str] = []  # worlds whose safety area is the fleet's
+        self.world_chosen = False           # picked by the user; otherwise the map follows the active world
+        self.max_image_px = 4096
+        self.image_bounds: tuple[float, float, float, float] | None = None  # west, south, east, north [deg]
         self.image_width = 0
         self.image_height = 0
 
@@ -55,7 +59,7 @@ class MapGridWindow:
         self.max_major_line_thickness = 2.4
         self.texture_loaded = False
 
-        self.cuzk_client = CuzkOrtofotoClient()
+        self.client = client
         self.map = map
         self.controller = Controller(self.map, self.drawlist_tag,
             map_grid=MapGridHandlers(self.map, self.drawlist_tag, lambda: self._ui_events.put(self._draw)),
@@ -65,7 +69,7 @@ class MapGridWindow:
         map.mission.subscribe(self._mission_callback)
 
         self.fleet = Fleet(map, self.drawlist_tag)
-        self.safety_area = SafetyArea(self.map, self.drawlist_tag, client, api_loop)
+        self.safety_area = SafetyArea(self.map, self.drawlist_tag, client, api_loop, on_change=self._border_changed)
 
         self._tracked_primitives: dict[str,WaypointPrimitive] = {}
         self.api_loop = api_loop
@@ -76,6 +80,7 @@ class MapGridWindow:
 
     def add(self) -> None:
 
+        self.request_workspace()
         self.request_map()
         self.safety_area.aquire()
 
@@ -84,7 +89,13 @@ class MapGridWindow:
         ):
             top_bar_tag = f"{self.window_tag}_top_bar"
             with dpg.group(tag=top_bar_tag, horizontal=True):
-                dpg.add_button(label="edit", tag=self.edit_button_tag, callback=self.open_edit_window)
+                dpg.add_combo(
+                    items=[],
+                    default_value="loading worlds...",
+                    tag=self.world_combo_tag,
+                    width=220,
+                    callback=lambda _sender, value: self._world_picked(value),
+                )
                 # dpg.add_checkbox(
                 #     label="local",
                 #     default_value=self.fleet.use_local_poses,
@@ -133,38 +144,109 @@ class MapGridWindow:
                 view.draw()
 
 
-    def request_map(self):
-        size_m = (self.image_size_m, self.image_size_m)
-        size_px = (int(size_m[0]/self.map.meters_per_pixel),int(size_m[1]/self.map.meters_per_pixel))
-        map_path = Path(self.map.cache_dir) / self.map.location_name
-        size_path = map_path.parent / f"{map_path.name}.size_m"
-        if map_path.is_file() and size_path.is_file():
+    def request_workspace(self, attempt: int = 0):
+        """Fetch the workspace's worlds from the bridge; retried while the bridge is not up yet."""
+        future = asyncio.run_coroutine_threadsafe(self.client.workspace(self.workspace), self.api_loop)
+
+        def on_workspace_acquired(future):
             try:
-                stored_size_m = float(size_path.read_text())
-                if stored_size_m >= self.image_size_m:
-                    self.image_size_m = stored_size_m
-                    self._map_image_bytes = map_path.read_bytes()
-                    self._ui_events.put(self.load_texture)
-                    self._ui_events.put(self._draw)
+                workspace = Workspace.from_json(future.result())
+            except Exception as e:
+                print(f"Failed to acquire workspace {self.workspace}: {e}")
+                if isinstance(e, ApiError) and not isinstance(e, ApiUnavailable) and e.status == 404:
+                    self._ui_events.put(lambda: self._workspace_failed(f"workspace '{self.workspace}' not found"))
                     return
-            except (OSError, ValueError):
-                pass
+                delay = min(2.0 * (attempt + 1), 10.0)
+                self.api_loop.call_soon_threadsafe(self.api_loop.call_later, delay, self.request_workspace, attempt + 1)
+                return
+            self._ui_events.put(lambda: self._workspace_loaded(workspace))
 
-        print(f"Requesting image size {size_m} {size_px}")
+        future.add_done_callback(on_workspace_acquired)
 
+    def _workspace_failed(self, message: str) -> None:
+        self.workspace_error = message
+        if dpg.does_item_exist(self.world_combo_tag):
+            dpg.set_value(self.world_combo_tag, "no worlds")
+        self._draw()
+
+    def _workspace_loaded(self, workspace: Workspace) -> None:
+        self.workspace_data = workspace
+        self.workspace_error = None
+        self._border_changed()
+        if self.workspace_data.world(self.map.world_name) is None:
+            self._follow_active_world(force=True)
+        self._update_world_combo()
+
+    def _border_changed(self) -> None:
+        """The fleet's safety area changed: find the worlds it belongs to."""
+        if self.workspace_data is None:
+            return
+        self.active_worlds = self.workspace_data.active_worlds(self.safety_area.points)
+        self.safety_area.border_in_workspace = not self.safety_area.points or bool(self.active_worlds)
+        self._follow_active_world()
+        self._update_world_combo()
+        self._draw()
+
+    def _follow_active_world(self, force: bool = False) -> None:
+        """Show an active world, unless the user picked one."""
+        if self.workspace_data is None or not self.workspace_data.worlds:
+            return
+        if self.world_chosen or (not force and self.map.world_name in self.active_worlds):
+            return
+        if self.active_worlds:
+            self.select_world(self.active_worlds[0])
+        elif force:
+            self.select_world(self.workspace_data.worlds[0].name)
+
+    def _world_label(self, name: str) -> str:
+        return f"{name} (active)" if name in self.active_worlds else name
+
+    def _update_world_combo(self) -> None:
+        if self.workspace_data is None or not dpg.does_item_exist(self.world_combo_tag):
+            return
+        dpg.configure_item(self.world_combo_tag, items=[self._world_label(w.name) for w in self.workspace_data.worlds])
+        dpg.set_value(self.world_combo_tag, self._world_label(self.map.world_name) if self.map.world_name else "no worlds")
+
+    def _world_picked(self, label: str) -> None:
+        if self.workspace_data is None:
+            return
+        name = next((w.name for w in self.workspace_data.worlds if self._world_label(w.name) == label), None)
+        if name is not None:
+            self.world_chosen = True
+            self.select_world(name)
+
+    def select_world(self, name: str) -> None:
+        """Show the world: its origin in the middle of the map, its safety area."""
+        world = self.workspace_data.world(name) if self.workspace_data else None
+        if world is None:
+            return
+        # The image stays where it is on the earth; the local frame moves to the world's origin.
+        self.map.world_name = world.name
+        self.map.origin_lat, self.map.origin_lon = world.origin
+        self.map.pan_px = [0.0, 0.0]
+        self._update_world_combo()
+        self._draw()
+
+    def request_map(self, attempt: int = 0):
+        """Fetch the workspace's orthophoto from the bridge; retried while the bridge is not up yet."""
         future = asyncio.run_coroutine_threadsafe(
-            self.cuzk_client.get_square_image(self.map.origin_lon, self.map.origin_lat, size_m, size_px),
-            self.api_loop)
+            self.client.workspace_map(self.workspace, self.max_image_px), self.api_loop)
 
         def on_map_acquired(future):
             try:
-                self._map_image_bytes = future.result()
-                map_path.write_bytes(self._map_image_bytes)
-                size_path.write_text(str(size_m[0]))
-                self._ui_events.put(self.load_texture)
-                self._ui_events.put(self._draw)
+                image, bounds = future.result()
             except Exception as e:
-                print("Failed to aquire the map")
+                print(f"Failed to acquire the map of workspace {self.workspace}: {e}")
+                delay = min(2.0 * (attempt + 1), 10.0)
+                self.api_loop.call_soon_threadsafe(self.api_loop.call_later, delay, self.request_map, attempt + 1)
+                return
+
+            def apply():
+                self._map_image_bytes = image
+                self.image_bounds = bounds
+                self.load_texture()
+                self._draw()
+            self._ui_events.put(apply)
 
         future.add_done_callback(on_map_acquired)
 
@@ -205,50 +287,6 @@ class MapGridWindow:
         self.image_height = height
         self.texture_loaded = True
 
-    def open_edit_window(self) -> None:
-        if dpg.does_item_exist(self.edit_window_tag):
-            self.sync_edit_window()
-            dpg.configure_item(self.edit_window_tag, show=True)
-            dpg.focus_item(self.edit_window_tag)
-            return
-
-        with dpg.window(
-            tag=self.edit_window_tag,
-            label="Map Grid",
-            width=280,
-            height=150,
-            pos=(20, 60),
-            no_collapse=True,
-        ):
-            dpg.add_input_text(label="origin lat", tag=self.origin_lat_input_tag, width=120)
-            dpg.add_input_text(label="origin lon", tag=self.origin_lon_input_tag, width=120)
-            dpg.add_input_text(label="image size m", tag=self.image_size_input_tag, width=120)
-            dpg.add_button(label="Load", callback=self.on_load_edit_window)
-
-        self.sync_edit_window()
-
-    def sync_edit_window(self) -> None:
-        if not dpg.does_item_exist(self.edit_window_tag):
-            return
-
-        dpg.set_value(self.origin_lat_input_tag, f"{self.map.origin_lat:.7f}")
-        dpg.set_value(self.origin_lon_input_tag, f"{self.map.origin_lon:.7f}")
-        dpg.set_value(self.image_size_input_tag, f"{self.image_size_m:g}")
-
-    def on_load_edit_window(self) -> None:
-        try:
-            origin_lat = float(dpg.get_value(self.origin_lat_input_tag))
-            origin_lon = float(dpg.get_value(self.origin_lon_input_tag))
-            image_size_m = float(dpg.get_value(self.image_size_input_tag))
-        except ValueError:
-            self.sync_edit_window()
-            return
-
-        self.map.origin_lat = origin_lat
-        self.map.origin_lon = origin_lon
-        self.image_size_m = image_size_m
-        self.request_map()
-
     def _draw(self) -> None:
         if not dpg.does_item_exist(self.drawlist_tag):
             return
@@ -277,17 +315,18 @@ class MapGridWindow:
             primitive.draw()
 
         #self.fleet.draw()
+        self.safety_area.world = self.workspace_data.world(self.map.world_name) if self.workspace_data else None
+        self.safety_area.world_active = self.map.world_name in self.active_worlds
         self.safety_area.draw()
 
     def draw_map_image(self, width: int, height: int) -> None:
-        if not self.texture_loaded:
+        if not self.texture_loaded or self.image_bounds is None:
             return
 
         origin = self.map.origin_canvas(width, height)
-        image_width_m = self.image_size_m
-        image_height_m = self.image_size_m * (self.image_height / self.image_width)
-        top_left = self.map.world_to_canvas((-image_width_m / 2, image_height_m / 2), origin)
-        bottom_right = self.map.world_to_canvas((image_width_m / 2, -image_height_m / 2), origin)
+        west, south, east, north = self.image_bounds
+        top_left = self.map.world_to_canvas(self.map.latlon_to_world(north, west), origin)
+        bottom_right = self.map.world_to_canvas(self.map.latlon_to_world(south, east), origin)
 
         dpg.draw_image(
             self.texture_tag,
@@ -350,8 +389,20 @@ class MapGridWindow:
 
     def info_text(self) -> str:
         return (
-            f"{self.map.location_name} "
+            f"{self.workspace}: {self.fleet_text()} | "
             f"origin: {self.map.origin_lat:.4f}, {self.map.origin_lon:.4f} | "
             f"smallest grid cell: {self.map.grid_cell_meters():g} m | "
             f"scale: {self.map.meters_per_pixel:.3f} m/px"
         )
+
+    def fleet_text(self) -> str:
+        """Where the fleet flies, as far as its safety area tells."""
+        if self.workspace_error:
+            return self.workspace_error
+        if self.workspace_data is None:
+            return "loading"
+        if not self.safety_area.points:
+            return "fleet safety area unknown"
+        if not self.active_worlds:
+            return "fleet safety area is no world of the workspace"
+        return "active: " + ", ".join(self.active_worlds)

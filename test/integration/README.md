@@ -23,4 +23,7 @@ HOLOSWARM_TEST_STACK=ground .venv/bin/python -m unittest discover -s test/integr
   `compose/_logs/<newest>/`. Stop it with `compose/down.sh`.
 - The containers run `holoswarm_ros_packages/install`; rebuild it with `compose/build.sh` (stack down)
   after changing ROS code.
-- The fleet manager outage tests stop and restart the `ground-fleet_manager-1` container.
+- The fleet manager outage tests stop and restart the `ground-fleet_manager-1` container; the persistence test
+  restarts `ground-iroc_bridge-1`.
+- The bridge stores queues in a test database of its own (`BRIDGE_CUSTOM_CONFIG=./compose/testing/bridge_test.yaml`
+  → `ROOT/.assets/test.sqlite`, reset at every run), never in the operator's `ROOT/.assets/holoswarm.sqlite`.

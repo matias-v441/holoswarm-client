@@ -10,6 +10,7 @@ HOLOSWARM_TEST_STACK picks the environment (see stack.py and README.md in this d
 Without HOLOSWARM_TEST_STACK, or while another compose stack is running, everything is skipped.
 """
 import asyncio
+import io
 import json
 import time
 import unittest
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import httpx
 import websockets
+from PIL import Image
 
 from holoswarm_client.iroc.client import ApiError, ApiUnavailable, IROCClient
 
@@ -450,6 +452,108 @@ class FleetManagerOutageTest(QueueTestCase):
         await self.submit_when_robots_known(ready["queue_id"])
         again = await self.wait_state(ready["queue_id"], "READY", "REJECTED")
         self.assertEqual(again["state"], "READY", again["message"])
+
+
+
+class WorkspaceTest(QueueTestCase):
+    """Workspaces: mrs_terrain worlds, their orthophoto, and the queues stored in them."""
+
+    async def test_default_workspace_holds_the_temesvar_worlds(self):
+        listing = await self.client.workspaces()
+        self.assertEqual(listing["default"], "temesvar")
+        temesvar = next(w for w in listing["workspaces"] if w["name"] == "temesvar")
+        self.assertIn("temesvar_field", temesvar["worlds"])
+        self.assertIn("temesvar_river", temesvar["worlds"])
+        self.assertTrue(all(name.startswith("temesvar") for name in temesvar["worlds"]))
+
+    async def test_workspace_has_worlds_map_and_queues(self):
+        queue = await self.create(self.routes(1), workspace="temesvar")
+        workspace = await self.client.workspace("temesvar")
+
+        self.assertEqual(sorted(w["name"] for w in workspace["worlds"]),
+                         sorted(next(w for w in (await self.client.workspaces())["workspaces"] if w["name"] == "temesvar")["worlds"]))
+        union = workspace["bounds"]
+        for world in workspace["worlds"]:
+            self.assertGreaterEqual(len(world["safety_area"]), 3, world["name"])
+            self.assertIsNotNone(world["origin"], world["name"])
+            for point in world["safety_area"]:
+                self.assertTrue(union["south"] <= point["lat"] <= union["north"] and union["west"] <= point["lon"] <= union["east"])
+        map_ = workspace["map"]
+        self.assertEqual(map_["url"], "/workspaces/temesvar/map")
+        self.assertTrue(map_["west"] < union["west"] and map_["east"] > union["east"]
+                        and map_["south"] < union["south"] and map_["north"] > union["north"], "the map covers the worlds with a margin")
+
+        self.assertIn(queue, workspace["queues"], "stored queues come with the workspace")
+        self.assertEqual(queue["workspace"], "temesvar")
+        listed = (await self.client.queues())["queues"]
+        self.assertIn(queue["queue_id"], [q["queue_id"] for q in listed])
+        async with httpx.AsyncClient(base_url=self.client.base_url, timeout=10) as http:
+            other = (await http.get("/queues", params={"workspace": "elsewhere"})).json()["queues"]
+        self.assertEqual(other, [])
+
+    async def test_default_workspace_of_new_queues(self):
+        queue = await self.create(self.routes(1))
+        self.assertEqual(queue["workspace"], "temesvar")
+
+    async def test_map_image(self):
+        workspace = await self.client.workspace("temesvar")
+        jpeg, bounds = await self.client.workspace_map("temesvar", max_px=1024)
+        image = Image.open(io.BytesIO(jpeg))
+        self.assertEqual(image.format, "JPEG")
+        self.assertEqual(max(image.size), 1024)
+        for got, expected in zip(bounds, (workspace["map"][k] for k in ("west", "south", "east", "north"))):
+            self.assertAlmostEqual(got, expected, places=8)
+        # Pixels are square in degrees (the RGB lattice), so the image has the extent's aspect in degrees.
+        west, south, east, north = bounds
+        self.assertAlmostEqual(image.size[0] / image.size[1], (east - west) / (north - south), delta=0.02 * image.size[0] / image.size[1])
+        # It is a photo, not the empty background.
+        colors = image.convert("RGB").resize((32, 32)).getcolors(1024)
+        self.assertGreater(len(colors), 50)
+
+        async with httpx.AsyncClient(base_url=self.client.base_url, timeout=10) as http:
+            for bad in ("0", "abc", "100000"):
+                with self.subTest(max_px=bad):
+                    self.assertEqual((await http.get("/workspaces/temesvar/map", params={"max_px": bad})).status_code, 400)
+
+    async def test_unknown_workspace(self):
+        await self.assert_refused(404, self.client.workspace("nowhere"))
+        await self.assert_refused(404, self.client.workspace_map("nowhere"))
+        error = await self.assert_refused(400, self.create(self.routes(1), workspace="nowhere"))
+        self.assertIn("nowhere", error.message)
+
+
+class BridgeRestartTest(QueueTestCase):
+    """Queues are stored: a restarted bridge has them again (the bridge container is restarted)."""
+
+    async def test_queues_survive_a_bridge_restart(self):
+        created = await self.create([PRECISE_MISSION, *self.routes(1)], name="kept")
+        staged = await self.submit_ready(self.routes(2))
+        self.assertEqual(staged["state"], "READY", staged["message"])
+        deleted = await self.create(self.routes(1))
+        await self.client.delete_queue(deleted["queue_id"])
+
+        await asyncio.to_thread(STACK.restart_bridge)
+
+        after = await self.client.queue(created["queue_id"])
+        self.assertEqual({k: v for k, v in after.items() if k != "updated_at"}, {k: v for k, v in created.items() if k != "updated_at"},
+                         "a stored queue comes back unchanged (details exactly)")
+        rejected = await self.client.queue(staged["queue_id"])
+        self.assertEqual((rejected["state"], rejected["message"]), ("REJECTED", "Bridge restarted"))
+        self.assertEqual([m["state"] for m in rejected["missions"]], ["QUEUED", "QUEUED"])
+        await self.assert_refused(404, self.client.queue(deleted["queue_id"]))
+        self.assertIn(created["queue_id"], [q["queue_id"] for q in (await self.client.workspace("temesvar"))["queues"]])
+
+        # The bridge releases the queue it left staged on the fleet manager, so it can be submitted again.
+        deadline = time.time() + 30
+        while True:
+            try:
+                await self.submit_when_robots_known(staged["queue_id"])
+                break
+            except ApiError as exc:
+                if exc.status != 409 or time.time() > deadline:
+                    raise
+                await asyncio.sleep(1.0)
+        self.assertEqual((await self.wait_state(staged["queue_id"], "READY", "REJECTED"))["state"], "READY")
 
 
 if __name__ == "__main__":

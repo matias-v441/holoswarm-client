@@ -9,7 +9,7 @@ from holoswarm_client.data.mission import Coverage, Mission, PointGlobal, PointL
 from holoswarm_client.iroc.mission_codec import CodecError, decode_mission, encode_draft
 
 TEST_DIR = Path(__file__).resolve().parents[1]
-FIXTURES = sorted((TEST_DIR / "holoswarm").glob("*.json")) + [
+FIXTURES = sorted((TEST_DIR / "json" / "missions" / "holoswarm").glob("*.json")) + [
     TEST_DIR / "json" / "missions" / name
     for name in ("coverage.json", "coverage_teme.json", "heading.json", "one_drone.json",
                  "sequential_subtask.json", "two_drones.json", "waypoint.json")
@@ -56,7 +56,7 @@ class CodecRoundTrip(unittest.TestCase):
                                 f"{encoded['details']} != {original['details']}")
 
     def test_local_points_are_shifted_by_home(self):
-        original = json.loads((TEST_DIR / "holoswarm" / "wp_14.json").read_text())
+        original = json.loads((TEST_DIR / "json" / "missions" / "holoswarm" / "wp_14.json").read_text())
         (task,) = decode_mission(original, HOMES)
         first = original["details"]["robots"][0]["points"][0]
         self.assertIsInstance(task.points[0], PointLocal)

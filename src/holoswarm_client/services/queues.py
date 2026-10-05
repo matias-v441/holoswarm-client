@@ -35,8 +35,10 @@ type MessageCallback = Callable[[str, bool], None]
 
 class QueueService:
 
-    def __init__(self, client: IROCClient, api_loop: asyncio.AbstractEventLoop, executions: ExecutionStore, draft: QueueDraft) -> None:
+    def __init__(self, client: IROCClient, api_loop: asyncio.AbstractEventLoop, executions: ExecutionStore, draft: QueueDraft,
+                 workspace: str | None = None) -> None:
         self.client = client
+        self.workspace = workspace  # new queues are stored in it (None: the bridge's default)
         self.api_loop = api_loop
         self.executions = executions
         self.draft = draft
@@ -112,7 +114,8 @@ class QueueService:
 
         async def run() -> bool:
             try:
-                await self.client.create_queue(scheduler, wire, queue_id=queue_id, name=name or None, params=dict(params or {}))
+                await self.client.create_queue(scheduler, wire, queue_id=queue_id, name=name or None, params=dict(params or {}),
+                                               workspace=self.workspace)
             except ApiError as exc:
                 self._post_message(f"Queue not created: {exc.message}", False)
                 return False

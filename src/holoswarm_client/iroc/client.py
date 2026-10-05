@@ -31,11 +31,14 @@ HTTP:
   POST /robots/{robot_name}/mission/{start|pause|stop}
   POST /robots/{takeoff|hover|land|home|land_home}
   POST /robots/{robot_name}/{takeoff|hover|land|home|land_home}
+  GET    /workspaces
+  GET    /workspaces/{name}               worlds (safety areas, origins), map bounds, stored queues
+  GET    /workspaces/{name}/map?max_px=N  orthophoto of the workspace as JPEG (X-Map-Bounds: west,south,east,north)
   GET    /schedulers
-  GET    /queues
+  GET    /queues?workspace=name
   GET    /queues/{queue_id}
   POST   /queues                          {"scheduler": string, "missions": [{"type": string, "details": object, "id": string?, "name": string?}],
-                                           "queue_id": string?, "name": string?, "params": object?, "world_id": string?}
+                                           "queue_id": string?, "workspace": string?, "name": string?, "params": object?, "world_id": string?}
   DELETE /queues/{queue_id}
   POST   /queues/{queue_id}/submit
   POST   /queues/{queue_id}/{start|cancel|pause|resume}
@@ -237,11 +240,14 @@ class IROCClient:
         name: str | None = None,
         params: dict[str, Any] | None = None,
         world_id: str | None = None,
+        workspace: str | None = None,
     ) -> dict[str, Any]:
-        """Store a queue with all of its missions on the bridge. Returns the queue."""
+        """Store a queue with all of its missions on the bridge (in the default workspace unless given). Returns the queue."""
         payload: dict[str, Any] = {"scheduler": scheduler, "missions": missions}
         if queue_id:
             payload["queue_id"] = queue_id
+        if workspace:
+            payload["workspace"] = workspace
         if name:
             payload["name"] = name
         if params:
@@ -267,6 +273,40 @@ class IROCClient:
             event = json.loads(message)
             if isinstance(event, dict) and event.get("type") in ("queue", "queue_removed"):
                 yield event
+
+    # | ----------------------- workspaces ----------------------- |
+
+    async def workspaces(self) -> dict[str, Any]:
+        """{"default": name, "workspaces": [{"name", "description", "worlds": [names]}]}"""
+        return await self._request_json("GET", "/workspaces")
+
+    async def workspace(self, name: str) -> dict[str, Any]:
+        """The workspace: worlds (origin, min/max z, safety area, bounds), map bounds and url, queues."""
+        body = await self._request_json("GET", f"/workspaces/{quote(name, safe='')}")
+        if not isinstance(body.get("workspace"), dict):
+            raise ApiError(200, "Malformed workspace response", body)
+        return body["workspace"]
+
+    async def workspace_map(self, name: str, max_px: int = 4096) -> tuple[bytes, tuple[float, float, float, float]]:
+        """The workspace's orthophoto (JPEG) and its extent (west, south, east, north) in degrees."""
+        endpoint = f"/workspaces/{quote(name, safe='')}/map"
+        try:
+            async with httpx.AsyncClient(base_url=self.base_url, timeout=QUEUE_TIMEOUT) as client:
+                response = await client.get(endpoint, params={"max_px": max_px})
+        except httpx.TransportError as exc:
+            raise TransportError(f"GET {endpoint}: {type(exc).__name__}: {exc}") from exc
+        if response.is_error:
+            try:
+                message = response.json().get("message")
+            except (json.JSONDecodeError, AttributeError):
+                message = None
+            error = ApiUnavailable if response.status_code == 503 else ApiError
+            raise error(response.status_code, message or response.text or response.reason_phrase)
+        try:
+            west, south, east, north = (float(v) for v in response.headers["X-Map-Bounds"].split(","))
+        except (KeyError, ValueError) as exc:
+            raise ApiError(response.status_code, f"Map without valid X-Map-Bounds header: {exc}") from exc
+        return response.content, (west, south, east, north)
 
     @staticmethod
     def _queue_of(body: dict[str, Any]) -> dict[str, Any]:
@@ -356,6 +396,7 @@ async def main() -> None:
     queue_create_parser.add_argument("--scheduler", default="batch")
     queue_create_parser.add_argument("--queue-id")
     queue_create_parser.add_argument("--name")
+    queue_create_parser.add_argument("--workspace")
 
     queue_submit_parser = subparsers.add_parser("queue-submit", help="Hand a queue to the fleet manager (stages its first step)")
     queue_submit_parser.add_argument("queue_id")
@@ -399,7 +440,8 @@ async def main() -> None:
         print(json.dumps(await client.queues(), indent=2))
     elif args.command == "queue-create":
         missions = [json.loads(Path(path).read_text(encoding="utf-8")) for path in args.json_paths]
-        print(json.dumps(await client.create_queue(args.scheduler, missions, queue_id=args.queue_id, name=args.name), indent=2))
+        print(json.dumps(await client.create_queue(args.scheduler, missions, queue_id=args.queue_id, name=args.name,
+                                                   workspace=args.workspace), indent=2))
     elif args.command == "queue-submit":
         print(json.dumps(await client.submit_queue(args.queue_id), indent=2))
     elif args.command == "queue-delete":
