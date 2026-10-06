@@ -169,6 +169,27 @@ def encode_draft(
     return encode_waypoints(paths, robot_names, robot_homes)
 
 
+def payload_robots(payload: Mapping[str, Any]) -> list[str]:
+    """The robots a planner payload names, in order (none for other planners)."""
+    details = payload.get("details") or {}
+    if payload.get("type") == COVERAGE_PLANNER:
+        return [str(name) for name in details.get("robots", ())]
+    if payload.get("type") == WAYPOINT_PLANNER:
+        return [str(route.get("name")) for route in details.get("robots", ()) if route.get("name")]
+    return []
+
+
+def rename_robots(payload: Mapping[str, Any], names: Mapping[str, str]) -> dict[str, Any]:
+    """A copy of the payload with its robots renamed (old -> new); everything else stays as it was."""
+    details = dict(payload.get("details") or {})
+    if payload.get("type") == COVERAGE_PLANNER:
+        details["robots"] = [names.get(name, name) for name in details.get("robots", ())]
+    elif payload.get("type") == WAYPOINT_PLANNER:
+        details["robots"] = [{**route, "name": names.get(route.get("name"), route.get("name"))}
+                             for route in details.get("robots", ())]
+    return {**payload, "details": details}
+
+
 def describe(payload: Mapping[str, Any]) -> str:
     """Short operator-facing summary of a planner payload."""
     details = payload.get("details", {})

@@ -247,7 +247,9 @@ class QueueService:
         if problems:
             mission, problem = problems[0]
             self._emit_message(f"{refused}: mission '{mission.name or mission.mission_id}': {problem}", False)
-        return not problems
+        elif self.draft.robot_conflict:
+            self._emit_message(f"{refused}: {self.draft.robot_conflict}", False)
+        return not problems and not self.draft.robot_conflict
 
     def _label(self, queue_id: str) -> str:
         queue = self.executions.queue(queue_id)

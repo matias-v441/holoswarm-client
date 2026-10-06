@@ -203,5 +203,71 @@ class QueueEditTest(unittest.TestCase):
         self.assertEqual(mission.to_wire(), {"id": "s2", "name": "Route", **WAYPOINTS})
 
 
+
+def routes(*robots):
+    return {"type": "WaypointPlanner", "details": {"robots": [{"name": r, "frame_id": 1, "points": []} for r in robots]}}
+
+
+def area(*robots):
+    return {"type": "CoveragePlanner", "details": {"robots": list(robots), "search_area": [], "height": 5.0}}
+
+
+class RobotSubstitutionTest(unittest.TestCase):
+
+    def setUp(self):
+        self.draft = QueueDraft()
+        self.draft.load(QueueExecution.from_json({"queue_id": "q1", "scheduler": "batch", "state": "CREATED", "missions": [
+            {"id": "a", **routes("uav14", "uav16")},
+            {"id": "b", **area("uav16")},
+            {"id": "c", "type": "OtherPlanner", "details": {"robots": ["x"]}},
+        ]}))
+
+    def robots_of(self, mission_id):
+        details = self.draft.mission(mission_id).payload["details"]
+        return [r["name"] if isinstance(r, dict) else r for r in details["robots"]]
+
+    def test_distinct_robots_of_the_queue(self):
+        self.assertEqual(self.draft.robots, ("uav14", "uav16"))
+
+    def test_substitution_renames_the_robot_in_every_mission(self):
+        self.assertIsNone(self.draft.choose_robot("uav16", "uav2"))
+        self.assertEqual(self.robots_of("a"), ["uav14", "uav2"])
+        self.assertEqual(self.robots_of("b"), ["uav2"])
+        self.assertEqual(self.draft.robots, ("uav14", "uav2"))
+        self.assertIn("uav2", self.draft.mission("b").summary)
+        self.assertEqual(self.draft.mission("a").payload["details"]["robots"][1]["frame_id"], 1, "the rest is kept")
+        self.assertTrue(self.draft.dirty)
+
+    def test_duplicates_are_refused_until_resolved(self):
+        before = [m.payload for m in self.draft.missions]
+        conflict = self.draft.choose_robot("uav14", "uav16")
+        self.assertIn("duplicates are not allowed", conflict)
+        self.assertEqual(self.draft.robot_conflict, conflict)
+        self.assertEqual([m.payload for m in self.draft.missions], before, "nothing changed")
+        self.assertEqual(self.draft.robot_choice("uav14"), "uav16", "the choice waits")
+        self.assertFalse(self.draft.dirty)
+
+        self.assertIsNone(self.draft.choose_robot("uav14", "uav14"), "taking it back resolves it")
+        self.assertIsNone(self.draft.robot_conflict)
+        self.assertEqual([m.payload for m in self.draft.missions], before)
+
+    def test_swap(self):
+        self.assertIsNotNone(self.draft.choose_robot("uav14", "uav16"))
+        self.assertIsNone(self.draft.choose_robot("uav16", "uav14"))
+        self.assertEqual(self.robots_of("a"), ["uav16", "uav14"])
+        self.assertEqual(self.robots_of("b"), ["uav14"])
+        self.assertIsNone(self.draft.robot_conflict)
+
+    def test_pending_choice_of_a_removed_robot_is_dropped(self):
+        self.draft.choose_robot("uav14", "uav16")
+        self.draft.remove("a")
+        self.assertIsNone(self.draft.robot_conflict, "uav14 is no longer in the queue")
+
+    def test_choices_belong_to_their_queue(self):
+        self.draft.choose_robot("uav14", "uav16")
+        self.draft.close()
+        self.assertIsNone(self.draft.robot_conflict)
+
+
 if __name__ == "__main__":
     unittest.main()

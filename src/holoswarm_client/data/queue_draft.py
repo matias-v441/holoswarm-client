@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from holoswarm_client.data.execution import MissionExecution, QueueExecution
-from holoswarm_client.iroc.mission_codec import describe
+from holoswarm_client.iroc.mission_codec import describe, payload_robots, rename_robots
 
 
 @dataclass(frozen=True)
@@ -79,6 +79,7 @@ class _Slot:
     settings: QueueSettings = field(default_factory=QueueSettings)
     added: int = 0  # missions added so far, for their default names
     errors: dict[str, str] = field(default_factory=dict)  # mission id -> why its paths or areas do not encode
+    robot_choices: dict[str, str] = field(default_factory=dict)  # robot -> chosen substitute, not applied (duplicates)
 
     def contents(self) -> Contents:
         return self.settings, tuple(m.to_wire() for m in self.missions)
@@ -129,6 +130,54 @@ class QueueDraft:
         errors = self._slot.errors
         return [(m, errors.get(m.mission_id) or "no path or area yet") for m in self._slot.missions
                 if m.empty or m.mission_id in errors]
+
+    # | ----------------------- robots ----------------------- |
+
+    @property
+    def robots(self) -> tuple[str, ...]:
+        """The distinct robots the missions name, in order of appearance."""
+        names: dict[str, None] = {}
+        for mission in self._slot.missions:
+            names.update(dict.fromkeys(payload_robots(mission.payload)))
+        return tuple(names)
+
+    def robot_choice(self, robot: str) -> str:
+        """The robot chosen to replace this one (itself unless a substitution waits for distinct names)."""
+        return self._slot.robot_choices.get(robot, robot)
+
+    @property
+    def robot_conflict(self) -> str | None:
+        """Why the chosen robots cannot be applied: two of them are the same."""
+        targets = [self.robot_choice(robot) for robot in self.robots]
+        duplicates = sorted({name for name in targets if targets.count(name) > 1})
+        if not duplicates:
+            return None
+        return f"{', '.join(duplicates)} would be used for more than one robot; duplicates are not allowed"
+
+    def choose_robot(self, robot: str, substitute: str) -> str | None:
+        """Use another robot instead of this one in every mission. While two robots would end up the same, nothing
+        is changed and the choice waits (returns why), e.g. for the second half of a swap."""
+        slot = self._slot
+        if substitute == robot:
+            slot.robot_choices.pop(robot, None)
+        else:
+            slot.robot_choices[robot] = substitute
+        slot.robot_choices = {k: v for k, v in slot.robot_choices.items() if k in self.robots}
+        self._changed = True
+        conflict = self.robot_conflict
+        if conflict is not None:
+            return conflict
+        names, slot.robot_choices = slot.robot_choices, {}
+        if names:
+            slot.missions = [self._renamed(m, names) for m in slot.missions]
+        return None
+
+    @staticmethod
+    def _renamed(mission: DraftMission, names: Mapping[str, str]) -> DraftMission:
+        if not set(payload_robots(mission.payload)) & set(names):
+            return mission
+        payload = rename_robots(mission.payload, names)
+        return replace(mission, payload=payload, summary=describe(payload))
 
     def error(self, mission_id: str) -> str | None:
         return self._slot.errors.get(mission_id)

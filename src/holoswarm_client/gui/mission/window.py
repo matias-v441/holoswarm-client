@@ -51,6 +51,7 @@ class MissionWindow:
         self.view = view
         self.window_tag = "mission_window"
         self._started = False  # the first snapshot selected a queue
+        self._shown_robots: tuple | None = None  # what the robot combos show
         self._arriving: str | None = None  # created and opened, but not in the store yet
         self._shown_selection: tuple[str | None, str | None] | None = None
         self._last_sync: SyncState | None = None
@@ -60,6 +61,8 @@ class MissionWindow:
         session.subscribe(lambda _: self._selection_changed())
         service.on_message(self._show_message)
         service.on_created(self._created)
+        if view is not None:
+            view.mission.subscribe(lambda _: self._draw_robots())  # robots are discovered at any time
 
     @property
     def selected_queue(self) -> str | None:
@@ -107,6 +110,8 @@ class MissionWindow:
                                  color=GREY, wrap=0)
                     dpg.add_combo(ASSIGNMENT_POLICIES, label="Assignment", tag=self._t("assignment_policy"),
                                   default_value=ASSIGNMENT_POLICIES[0], width=160, callback=self._settings_changed)
+                with dpg.group(horizontal=True, tag=self._t("robots")):
+                    pass
                 with dpg.group(horizontal=True):
                     self._button("create", "Create queue", self._create,
                                  "Store the queue on the server with all of its missions.\n"
@@ -216,6 +221,7 @@ class MissionWindow:
                     dpg.add_button(label="x", user_data=mission.mission_id,
                                    callback=lambda s, a, mission_id: self.draft.remove(mission_id))
         self._show_settings()
+        self._draw_robots()
         self._update_draft_controls()
         self._update_controls()
 
@@ -304,6 +310,8 @@ class MissionWindow:
         if problems:
             mission, text = problems[0]
             problem = f"Mission '{mission.name or mission.mission_id}': {text}"
+        elif draft.robot_conflict:
+            problem = f"Robots: {draft.robot_conflict}"
 
         if not editing:
             creating = CREATING in self.service.pending
@@ -313,7 +321,7 @@ class MissionWindow:
                           "Click a mission to select it; click a queue below to open it here.")
             dpg.set_value(self._t("editor_note"), problem)
             dpg.configure_item(self._t("editor_note"), show=bool(problem))
-            dpg.configure_item(self._t("create"), enabled=len(draft) > 0 and not creating and not problems,
+            dpg.configure_item(self._t("create"), enabled=len(draft) > 0 and not creating and not problem,
                                label="Creating..." if creating else "Create queue")
             dpg.configure_item(self._t("clear"), enabled=len(draft) > 0 and not creating)
             return
@@ -343,9 +351,46 @@ class MissionWindow:
             note = ""
         dpg.set_value(self._t("editor_note"), note)
         dpg.configure_item(self._t("editor_note"), show=bool(note))
-        dpg.configure_item(self._t("upload"), enabled=dirty and editable and not pending and len(draft) > 0 and not problems,
+        dpg.configure_item(self._t("upload"), enabled=dirty and editable and not pending and len(draft) > 0 and not problem,
                            label="Uploading..." if pending and dirty else "Upload changes")
         dpg.configure_item(self._t("revert"), enabled=dirty and queue is not None and not pending)
+
+    def _draw_robots(self) -> None:
+        """A combo per robot of the queue: choose another (discovered) robot to use instead, in every mission."""
+        if not dpg.does_item_exist(self._t("robots")):
+            return
+        draft = self.draft
+        robots = draft.robots
+        available = tuple(sorted(set(self.view.mission.robot_names if self.view else ()) | set(robots)))
+        shown = (robots, tuple(draft.robot_choice(r) for r in robots), available, draft.read_only)
+        if shown == self._shown_robots:
+            return
+        self._shown_robots = shown
+        dpg.delete_item(self._t("robots"), children_only=True)
+        dpg.configure_item(self._t("robots"), show=bool(robots))
+        if not robots:
+            return
+        dpg.add_text("Robots", parent=self._t("robots"))
+        with dpg.tooltip(dpg.last_item()):
+            dpg.add_text("Use another robot instead of one of the queue: it is replaced in every mission.\n"
+                         "Robots must stay distinct; swap two by choosing each other's.")
+        for robot in robots:
+            dpg.add_combo(list(available), default_value=draft.robot_choice(robot), width=90, parent=self._t("robots"),
+                          enabled=not draft.read_only, user_data=robot,
+                          callback=lambda s, value, robot: self._robot_chosen(robot, value))
+            with dpg.tooltip(dpg.last_item()):
+                dpg.add_text(f"Instead of {robot}")
+
+    def _robot_chosen(self, robot: str, substitute: str) -> None:
+        if self.draft.read_only:
+            return
+        conflict = self.draft.choose_robot(robot, substitute)
+        if conflict:
+            self._show_message(f"Not changed: {conflict}. Choose distinct robots.", False)
+        else:
+            self._show_message("", True)
+        self._update_draft_controls()
+        self._update_controls()
 
     def _show_settings(self) -> None:
         """The widgets show the settings of the draft (new or edited queue)."""

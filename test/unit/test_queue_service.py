@@ -284,6 +284,15 @@ class QueueServiceTest(unittest.TestCase):
         self.assertFalse(self.messages[-1][1])
         self.assertEqual(self.client.count("create_queue") + self.client.count("replace_queue"), 0)
 
+    def test_duplicate_robots_are_not_sent(self):
+        self.draft.load(QueueExecution.from_json({"queue_id": "stored", "scheduler": "batch", "state": "CREATED", "missions": [
+            {"id": "s1", **WAYPOINTS}, {"id": "s2", "type": "CoveragePlanner", "details": {"robots": ["uav2"]}}]}))
+        self.draft.choose_robot("uav1", "uav2")
+        self.draft.rename("s1", "x")
+        self.assertIsNone(self.service.upload())
+        self.assertIn("duplicates are not allowed", self.messages[-1][0])
+        self.assertEqual(self.client.count("replace_queue"), 0)
+
     def test_read_only_queue_is_not_uploaded(self):
         self.draft.load(QueueExecution.from_json({**{"queue_id": "stored", "scheduler": "batch", "state": "RUNNING"},
                                                   "missions": [{"id": "s1", **COVERAGE}]}))

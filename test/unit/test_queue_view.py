@@ -76,6 +76,17 @@ class QueueViewTest(unittest.TestCase):
         self.assertEqual(self.session.selected_mission, new.mission_id)
         self.assertEqual(self.session.selected_task, self.task(new.mission_id).uuid)
 
+    def test_renamed_robots_are_shown(self):
+        self.load()
+        self.session.select_mission("m2")
+        self.draft.choose_robot("uav2", "uav3")
+        self.draft.notify()
+        self.assertEqual(sorted(t.assigned_robot for t in self.mission.tasks_of("m1")), ["uav1", "uav3"])
+        self.assertEqual(self.task("m2").assigned_robots, ("uav1",), "uav2 was not in the area")
+        self.assertEqual(self.session.selected_mission, "m2")
+        self.assertEqual(self.session.selected_task, self.task("m2").uuid, "a task of the mission stays selected")
+        self.assertEqual(self.draft.problems, [])
+
     def test_closing_shows_the_new_queue(self):
         self.load()
         self.draft.close()

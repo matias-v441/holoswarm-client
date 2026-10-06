@@ -72,7 +72,10 @@ class QueueView:
             self._known = known
 
             self.mission.read_only = self.draft.read_only
+            selected = self.session.selected_task
             self.mission.set_tasks(tasks)
+            if selected is not None and selected not in self.mission.tasks:
+                self._last_mission = _UNSET  # its mission was rewritten (e.g. robots renamed): select its first task
 
             missions = [m.mission_id for m in self.draft.missions]
             if queue_changed or self.session.selected_mission not in missions:
