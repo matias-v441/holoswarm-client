@@ -7,8 +7,8 @@ from math import cos, sin
 
 Point = tuple[float, float]
 
-GREY_LINE = (150, 150, 150, 170)  # tasks of the queue's other missions
-GREY_FILL = (120, 120, 120, 200)
+DARK_ORANGE_LINE = (180, 95, 30, 170)  # tasks of the queue's other missions
+DARK_ORANGE_FILL = (150, 75, 20, 200)
 
 class WaypointPrimitive:
     
@@ -60,7 +60,7 @@ class WaypointPrimitive:
         self.items = set()
 
         wp_selected = self.session.item_selected(wp.uuid)
-        # Tasks of the selected mission (or one being drawn) in orange, the rest of the queue grey.
+        # Tasks of the selected mission (or one being drawn) in orange, the rest of the queue dark orange.
         in_mission = wp.mission_id is None or wp.mission_id == self.session.selected_mission
 
         if wp.points and isinstance(wp.points[0], PointGlobal):
@@ -74,7 +74,7 @@ class WaypointPrimitive:
                 for p in wp.points
             ]
         
-        line_color = (255, 255, 255, 255) if wp_selected else (255, 205, 89, 235) if in_mission else GREY_LINE
+        line_color = (255, 255, 255, 255) if wp_selected else (255, 205, 89, 235) if in_mission else DARK_ORANGE_LINE
         thickness = 3 if wp_selected else 2 if in_mission else 1.5
 
         for start, end in zip(canvas_points, canvas_points[1:]):
@@ -84,7 +84,7 @@ class WaypointPrimitive:
         
         for center,heading in canvas_points:
             
-            fill = ((255, 225, 126, 255) if self._hovered else (255, 205, 89, 255)) if in_mission else GREY_FILL
+            fill = ((255, 225, 126, 255) if self._hovered else (255, 205, 89, 255)) if in_mission else DARK_ORANGE_FILL
             outline = (255, 255, 255, 255) if wp_selected else (42, 44, 50, 255)
 
             self.items.update({

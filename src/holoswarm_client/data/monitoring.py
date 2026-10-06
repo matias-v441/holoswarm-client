@@ -5,6 +5,7 @@ from uuid import uuid4
 from typing import Generic, TypeVar
 from enum import Enum
 from threading import Lock
+import time
 
 @dataclass(frozen=True)
 class BatteryState:
@@ -177,33 +178,65 @@ class MissionState:
 
 type Callback = Callable[["Monitoring"],None]
 
+
+def _position(state: RobotState | None) -> tuple[float, ...] | None:
+    """The unrounded position estimate (local and global): its changes tell whether telemetry is flowing."""
+    info = state.state_estimation_info if state is not None else None
+    if info is None:
+        return None
+    local, global_ = info.local_pose, info.global_pose
+    return (local.x, local.y, local.z, global_.latitude, global_.longitude, global_.altitude)
+
+
 class Monitoring:
+    """Telemetry of the robots, as discovered from the telemetry stream. Pushed from the listener threads;
+    notify() hands a copy to the subscribers on the GUI thread, only after something was pushed."""
+
     def __init__(self):
         self._robot_states: dict[str, RobotState] = {}
         self._mission_state: MissionState = None
+        self._position_changed_at: dict[str, float] = {}
         self._callbacks: list[Callback] = []
         self._lock = Lock()
+        self._changed = False
 
     def telemetry(self, robot_name: str):
         return self._robot_states.get(robot_name, None)
-    
+
+    def robot_names(self) -> tuple[str, ...]:
+        """Robots that sent telemetry, sorted."""
+        return tuple(sorted(self._robot_states))
+
+    def position_changed_at(self, robot_name: str) -> float | None:
+        """When the robot's position estimate last changed (time.time()), None before the first one."""
+        return self._position_changed_at.get(robot_name)
+
     def push(self, state: RobotState | MissionState) -> None:
         if isinstance(state, RobotState):
             with self._lock:
+                position = _position(state)
+                if position is not None and position != _position(self._robot_states.get(state.robot_name)):
+                    self._position_changed_at[state.robot_name] = time.time()
                 self._robot_states[state.robot_name] = state
+                self._changed = True
         elif isinstance(state, MissionState):
             with self._lock:
                 self._mission_state = state
+                self._changed = True
         else:
             raise ValueError("Unknown instance")
 
     def subscribe(self,callback:Callback) -> None:
         self._callbacks.append(callback)
-    
+
     def notify(self) -> None:
         with self._lock:
+            if not self._changed:
+                return
+            self._changed = False
             ui_monitoring = Monitoring()
             ui_monitoring._robot_states = self._robot_states.copy()
             ui_monitoring._mission_state = self._mission_state
+            ui_monitoring._position_changed_at = self._position_changed_at.copy()
         for callback in self._callbacks:
             callback(ui_monitoring)

@@ -63,6 +63,19 @@ class QueueViewTest(unittest.TestCase):
         self.assertFalse(self.draft.dirty)
         self.assertEqual(self.draft.problems, [])
 
+    def test_opening_the_created_queue_selects_its_first_task(self):
+        path = Waypoints(points=(PointGlobal(49.37, 14.27, 0, 5.0),), time_interval=(0., 1.), assigned_robot="uav1")
+        self.mission.push_task(path)
+        (new,) = self.draft.missions
+        self.draft.notify()
+        self.session.select_task(None)
+        created = QueueExecution.from_json({"queue_id": "q9", "scheduler": "batch", "state": "CREATED",
+                                            "missions": [dict(new.to_wire())]})
+        self.draft.load(created)  # the same mission id as in the new queue
+        self.draft.notify()
+        self.assertEqual(self.session.selected_mission, new.mission_id)
+        self.assertEqual(self.session.selected_task, self.task(new.mission_id).uuid)
+
     def test_closing_shows_the_new_queue(self):
         self.load()
         self.draft.close()

@@ -16,7 +16,7 @@ from holoswarm_client.services.queues import QueueService
 from holoswarm_client.gui.listeners.telemetry import TelemetryListener
 from holoswarm_client.gui.listeners.feedback import FeedbackListener
 from holoswarm_client.iroc.client import IROCClient
-from holoswarm_client.gui.uav.window import UAVWindow
+from holoswarm_client.gui.robots.window import RobotsWindow
 
 import argparse
 import json
@@ -46,7 +46,7 @@ def main():
     parser.add_argument(
         "--robots",
         nargs="+",
-        help="One or more robot names/IDs.",
+        help="Robots to list before their telemetry arrives (optional: robots are discovered from the telemetry).",
     )
 
     parser.add_argument(
@@ -93,7 +93,7 @@ def main():
         init_file=user_layout_file if Path(user_layout_file).exists() else default_layout_file,
     )
 
-    mission = Mission(*args.robots)
+    mission = Mission(*(args.robots or ()))  # more robots join as their telemetry arrives
     session = Session()
     monitoring = Monitoring()
 
@@ -122,11 +122,9 @@ def main():
     mission_window = MissionWindow(queue_service, executions, queue_draft, session, view=queue_view)
     mission_window.add()
 
-    robots: list[UAVWindow] = []
-    for robot in args.robots:
-        uav = UAVWindow(robot, monitoring, client, api_loop)
-        uav.add()
-        robots.append(uav)
+    # Robots are discovered from the telemetry stream; --robots only lists them before that.
+    robots = RobotsWindow(monitoring, client, api_loop, mission, expected=args.robots or ())
+    robots.add()
 
     telemetry = TelemetryListener(monitoring, client, api_loop)
     telemetry.start()
@@ -150,9 +148,7 @@ def main():
         while dpg.is_dearpygui_running():
             monitoring.notify()
             map_window.process_events()
-            for uav in robots:
-                uav.process_events()
-                uav.process_events()
+            robots.process_events()
             explorer.process_events()
             queue_service.process_events()
             mission_window.process_events()

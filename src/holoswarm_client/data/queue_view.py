@@ -76,6 +76,8 @@ class QueueView:
 
             missions = [m.mission_id for m in self.draft.missions]
             if queue_changed or self.session.selected_mission not in missions:
+                if queue_changed:
+                    self._last_mission = _UNSET  # cascade to the first task even when the mission id stays
                 self.session.select_mission(missions[0] if missions else None)
             self._cascade()
             if queue_changed and self.on_focus and tasks:

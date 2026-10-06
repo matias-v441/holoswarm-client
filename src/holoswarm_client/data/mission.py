@@ -126,6 +126,13 @@ class Mission:
             }
         )
 
+    def set_robot_names(self, robot_names: Sequence[str]) -> None:
+        """The robots missions can use (discovered from telemetry); views offering robots redraw."""
+        robot_names = tuple(robot_names)
+        if robot_names != self.robot_names:
+            self.robot_names = robot_names
+            self._notify()
+
     def tasks_of(self, mission_id: str | None) -> tuple[MissionTask, ...]:
         return tuple(task for task in self._tasks.values() if task.mission_id == mission_id)
 

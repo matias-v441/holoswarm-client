@@ -1,110 +1,32 @@
 import dearpygui.dearpygui as dpg
-import asyncio
-from holoswarm_client.data.monitoring import *
-from holoswarm_client.iroc.client import IROCClient
 from dataclasses import fields, is_dataclass
 from enum import Enum
-from asyncio import AbstractEventLoop
-from queue import SimpleQueue, Empty
+
+from holoswarm_client.data.monitoring import RobotState
+
+NONE_THEME = "telemetry_tree_none_theme"
 
 
-class UAVWindow:
+class TelemetryTree:
+    """The whole telemetry of a robot as a tree of its fields, updated in place (items keep their tags)."""
 
-    def __init__(self, name: str, monitoring: Monitoring, client: IROCClient, api_loop: AbstractEventLoop):
-        self.name = name
-        self.monitoring = monitoring
-        self.client = client
-        self.api_loop = api_loop
-        self.window_tag = f"uav_{name}_window"
-        self.tree_tag = f"{self.window_tag}_telemetry"
-        self.none_theme_tag = f"{self.window_tag}_none_theme"
-        self._last_telemetry = None
-        monitoring.subscribe(self._draw)
-        self._ui_events = SimpleQueue()
-        self.response_text_tag = f"{self.window_tag}_response"
+    def __init__(self, prefix: str, parent: str | int) -> None:
+        self.prefix = prefix
+        self.tree_tag = parent
+        self.none_theme_tag = NONE_THEME
+        if not dpg.does_item_exist(NONE_THEME):
+            with dpg.theme(tag=NONE_THEME):
+                with dpg.theme_component(dpg.mvTreeNode):
+                    dpg.add_theme_color(dpg.mvThemeCol_Text, (130, 130, 130), category=dpg.mvThemeCat_Core)
 
-    def add(self):
-        self._add_none_theme()
-        with dpg.window(
-            label=f"UAV {self.name}",
-            tag=self.window_tag
-        ):
-            with dpg.group(horizontal=True):
-                dpg.add_button(label="Takeoff", callback=self._takeoff)
-                dpg.add_button(label="Hover", callback=self._hover)
-                dpg.add_button(label="Land", callback=self._land)
-                dpg.add_button(label="Home", callback=self._home)
-            dpg.add_text("",tag=self.response_text_tag)
-            dpg.add_group(tag=self.tree_tag)
-            for field in fields(RobotState):
-                if field.name == "robot_name":
-                    continue
-                self._draw_member(field.name, None, self.tree_tag, field.name)
-        self._draw(self.monitoring)
-
-    def _on_command_done(self,future):
-        try:
-            res = future.result()
-            print("result:", res)
-            def show_result():
-                dpg.set_value(self.response_text_tag, str(res))
-            self._ui_events.put(show_result)
-        except Exception as e:
-            error = str(e)
-            print("error: ", error)
-            def show_result():
-                dpg.set_value(self.response_text_tag, error)
-            self._ui_events.put(show_result)
-    
-    def process_events(self):
-        while True:
-            try:
-                event = self._ui_events.get_nowait()
-            except Empty:
-                break
-            event.__call__()
-
-    def _takeoff(self) -> None:
-        future = asyncio.run_coroutine_threadsafe(self.client.takeoff(self.name), self.api_loop)
-        future.add_done_callback(self._on_command_done)
-
-    def _hover(self) -> None:
-        future = asyncio.run_coroutine_threadsafe(self.client.hover(self.name), self.api_loop)
-        future.add_done_callback(self._on_command_done)
-
-    def _land(self) -> None:
-        future = asyncio.run_coroutine_threadsafe(self.client.land(self.name), self.api_loop)
-        future.add_done_callback(self._on_command_done)
-
-    def _home(self) -> None:
-        future = asyncio.run_coroutine_threadsafe(self.client.home(self.name), self.api_loop)
-        future.add_done_callback(self._on_command_done)
-
-    def _draw(self, monitoring):
-        telemetry = monitoring.telemetry(self.name)
-        if telemetry == self._last_telemetry or not dpg.does_item_exist(self.tree_tag):
+    def draw(self, telemetry: RobotState | None) -> None:
+        if not dpg.does_item_exist(self.tree_tag):
             return
-
-        self._last_telemetry = telemetry
-
-        if telemetry is None:
-            for field in fields(RobotState):
-                if field.name == "robot_name":
-                    continue
-                self._draw_member(field.name, None, self.tree_tag, field.name)
-            return
-
-        for field in fields(telemetry):
+        for field in fields(RobotState):
             if field.name == "robot_name":
                 continue
-            self._draw_member(field.name, getattr(telemetry, field.name), self.tree_tag, field.name)
-
-    def _add_none_theme(self) -> None:
-        if dpg.does_item_exist(self.none_theme_tag):
-            return
-        with dpg.theme(tag=self.none_theme_tag):
-            with dpg.theme_component(dpg.mvTreeNode):
-                dpg.add_theme_color(dpg.mvThemeCol_Text, (130, 130, 130), category=dpg.mvThemeCat_Core)
+            value = getattr(telemetry, field.name) if telemetry is not None else None
+            self._draw_member(field.name, value, self.tree_tag, field.name)
 
     def _draw_member(self, name: str, value: object, parent: str, path: str) -> None:
         tag = self._tag(path)
@@ -218,4 +140,4 @@ class UAVWindow:
 
     def _tag(self, path: str) -> str:
         safe_path = "".join(char if char.isalnum() or char == "_" else "_" for char in path)
-        return f"{self.window_tag}_{safe_path}"
+        return f"{self.prefix}_{safe_path}"

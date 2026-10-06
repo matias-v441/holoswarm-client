@@ -51,6 +51,7 @@ class MissionWindow:
         self.view = view
         self.window_tag = "mission_window"
         self._started = False  # the first snapshot selected a queue
+        self._arriving: str | None = None  # created and opened, but not in the store yet
         self._shown_selection: tuple[str | None, str | None] | None = None
         self._last_sync: SyncState | None = None
         self._schedulers: list[str] = []
@@ -58,6 +59,7 @@ class MissionWindow:
         draft.subscribe(lambda _: self._draw_draft())
         session.subscribe(lambda _: self._selection_changed())
         service.on_message(self._show_message)
+        service.on_created(self._created)
 
     @property
     def selected_queue(self) -> str | None:
@@ -73,6 +75,11 @@ class MissionWindow:
                 dpg.add_theme_color(dpg.mvThemeCol_Text, (110, 110, 110))
                 for color in (dpg.mvThemeCol_Button, dpg.mvThemeCol_ButtonHovered, dpg.mvThemeCol_ButtonActive):
                     dpg.add_theme_color(color, (45, 45, 48))
+            with dpg.theme_component(dpg.mvSelectable):
+                # Match the map's golden hue, darkened for readable table text.
+                dpg.add_theme_color(dpg.mvThemeCol_Header, (100, 80, 35, 255))
+                dpg.add_theme_color(dpg.mvThemeCol_HeaderHovered, (112, 90, 39, 255))
+                dpg.add_theme_color(dpg.mvThemeCol_HeaderActive, (124, 100, 43, 255))
 
         with dpg.window(label="Mission", tag=self.window_tag):
             dpg.add_text("", tag=self._t("sync"))
@@ -312,9 +319,10 @@ class MissionWindow:
             return
 
         queue = self.executions.queue(draft.queue_id)
-        label = queue.display_name if queue else draft.queue_id
+        label = queue.display_name if queue else draft.settings.name or draft.queue_id
+        arriving = queue is None and draft.queue_id == self._arriving  # just created: its event is on the way
         pending = draft.queue_id in self.service.pending
-        editable = queue is not None and queue.state.can_submit
+        editable = (queue is not None and queue.state.can_submit) or arriving
         if read_only and not dirty:
             dpg.configure_item(self._t("editor"), label=f"Queue {label} (read-only)")
             dpg.set_value(self._t("editor_hint"), "Click a mission to select it on the map.")
@@ -322,7 +330,7 @@ class MissionWindow:
             dpg.configure_item(self._t("editor"), label=f"Edit queue {label}" + (" *" if dirty else ""))
             dpg.set_value(self._t("editor_hint"),
                           "A copy of the queue: change it like a new queue, then upload it. It stays the same queue.")
-        if queue is None:
+        if queue is None and not arriving:
             note = "The queue was deleted on the server; the changes cannot be uploaded."
         elif not editable:
             note = (f"The queue is {queue.state.value}: " +
@@ -382,8 +390,9 @@ class MissionWindow:
             return
         queue = self.executions.queue(self.draft.queue_id)
         if queue is not None:
+            self._arriving = None
             self.draft.sync(queue)
-        elif not self.draft.dirty:
+        elif not self.draft.dirty and self.draft.queue_id != self._arriving:
             self._close()
 
     def _selection_changed(self) -> None:
@@ -446,6 +455,14 @@ class MissionWindow:
         if queue is not None:
             self.draft.load(queue)
             self.session.select_queue(queue_id)
+
+    def _created(self, queue: QueueExecution) -> None:
+        """A queue created from the new queue becomes the selected one, unless an edit with changes is open meanwhile."""
+        if self.draft.dirty:
+            return
+        self._arriving = queue.queue_id  # not in the store until its event arrives; not deleted
+        self.draft.load(queue)
+        self.session.select_queue(queue.queue_id)
 
     def _close(self) -> None:
         self.draft.close()

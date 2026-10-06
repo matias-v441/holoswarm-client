@@ -20,25 +20,26 @@ class Fleet:
 
     def monitoring_callback(self, monitoring: Monitoring) -> None:
         pose_attribute = "local_pose" if self.use_local_poses else "global_pose"
-        old_poses = self.poses
         self.poses = {
             robot_name: getattr(state.state_estimation_info, pose_attribute)
             for robot_name, state in monitoring._robot_states.items()
             if state.state_estimation_info is not None
         }
-        if not old_poses:
+        # A robot's home is where it was first seen; robots are discovered at any time.
+        new = {name: pose for name, pose in self.poses.items() if name not in self.homes}
+        if new:
             if self.use_local_poses:
-                self.homes = self.poses.copy()
+                self.homes.update(new)
             else:
                 latlon_to_world = self.map.latlon_to_world
-                self.homes = {
+                self.homes.update({
                     robot_name: LocalPose(
                         *latlon_to_world(pose.latitude, pose.longitude),
                         pose.altitude,
                         pose.heading,
                     )
-                    for robot_name, pose in self.poses.items()
-                }
+                    for robot_name, pose in new.items()
+                })
             self.map.mission.robot_homes = {
                 robot_name: (home.x, home.y)
                 for robot_name, home in self.homes.items()

@@ -124,6 +124,22 @@ class QueueServiceTest(unittest.TestCase):
         self.assertTrue(self.messages[-1][1])
         self.assertNotIn(CREATING, self.service.pending)
 
+    def test_created_queue_is_reported(self):
+        created = []
+        self.service.on_created(created.append)
+        self.fill_draft()
+        self.draft.set_settings(name="Survey")
+        self.run_op(self.service.create())
+        (queue,) = created
+        (call,) = [c for c in self.client.calls if c[0] == "create_queue"]
+        self.assertEqual(queue.queue_id, call[3])
+        self.assertEqual(len(queue.missions), 2)
+
+        self.fill_draft()
+        self.client.fail["create_queue"] = [ApiError(400, "Bad request")]
+        self.run_op(self.service.create())
+        self.assertEqual(len(created), 1, "not for a refused queue")
+
     def test_create_stores_the_queue_in_the_workspace(self):
         service = QueueService(self.client, self.loop, self.executions, self.draft, workspace="temesvar")
         self.fill_draft()
@@ -158,12 +174,15 @@ class QueueServiceTest(unittest.TestCase):
         # Stored although the answer was lost.
         async def lost_answer(*args, **kwargs):
             self.client.calls.append(("create_queue",))
-            self.client.queues_stored[kwargs["queue_id"]] = {}
+            self.client.queues_stored[kwargs["queue_id"]] = {"queue_id": kwargs["queue_id"], "state": "CREATED", "missions": []}
             raise TransportError("timed out")
 
         original = self.client.create_queue
         self.client.create_queue = lost_answer
+        created = []
+        self.service.on_created(created.append)
         self.assertTrue(self.run_op(self.service.create()))
+        self.assertEqual(len(created), 1, "the stored queue is reported although the answer was lost")
         self.assertEqual(self.client.count("queue"), 1)
         self.assertEqual(len(self.draft), 0)
 

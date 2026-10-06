@@ -32,6 +32,7 @@ RECONCILE_PERIOD = 60.0  # [s] safety-net snapshot even when events look consist
 CREATING = "<new queue>"  # pending key while a queue is being created
 
 type MessageCallback = Callable[[str, bool], None]
+type CreatedCallback = Callable[[QueueExecution], None]
 
 
 class QueueService:
@@ -48,6 +49,7 @@ class QueueService:
 
         self._updates: SimpleQueue[Callable[[], None]] = SimpleQueue()
         self._message_callbacks: list[MessageCallback] = []
+        self._created_callbacks: list[CreatedCallback] = []
         self._listen_future: Future | None = None
         self._refresh_pending = False
 
@@ -71,6 +73,10 @@ class QueueService:
             update()
         self.executions.notify()
         self.draft.notify()
+
+    def on_created(self, callback: CreatedCallback) -> None:
+        """A queue was created on the bridge (its stored state, maybe before the store's event)."""
+        self._created_callbacks.append(callback)
 
     def on_message(self, callback: MessageCallback) -> None:
         """Operator-facing result of commands: (text, success)."""
@@ -121,15 +127,15 @@ class QueueService:
 
         async def run() -> bool:
             try:
-                await self.client.create_queue(settings.scheduler, wire, queue_id=queue_id, name=name or None,
-                                               params=dict(settings.params), workspace=self.workspace)
+                stored = await self.client.create_queue(settings.scheduler, wire, queue_id=queue_id, name=name or None,
+                                                        params=dict(settings.params), workspace=self.workspace)
             except ApiError as exc:
                 self._post_message(f"Queue not created: {exc.message}", False)
                 return False
             except TransportError as exc:
                 # No answer: the bridge may have stored it anyway. Creating again would make a duplicate.
                 try:
-                    await self.client.queue(queue_id)
+                    stored = await self.client.queue(queue_id)
                 except ApiError as lookup:
                     if lookup.status == 404:
                         self._post_message(f"Queue not created: {exc}", False)
@@ -143,6 +149,9 @@ class QueueService:
             def created() -> None:
                 self.draft.forget_created(sent)
                 self._emit_message(f"Queue {label} created with {len(wire)} mission(s). Submit it to stage the first step on the robots.", True)
+                queue = QueueExecution.from_json(stored)
+                for callback in self._created_callbacks:
+                    callback(queue)
 
             self._post(created)
             return True
