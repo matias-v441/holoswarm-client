@@ -92,7 +92,8 @@ class MissionWindow:
             with dpg.group(horizontal=True):
                 self._button("submit", "Submit", self._submit,
                              "Hand the queue to the fleet manager. It plans the first step and uploads it to the robots;\n"
-                             "nothing moves until Start. Only one queue can be submitted at a time.")
+                             "nothing moves until Start. Only one queue can be submitted at a time.\n"
+                             "A finished, cancelled or interrupted queue runs again from scratch.")
                 self._button("start", "Start", lambda: self._control("start"),
                              "Start the uploaded goals; the rest of the queue follows automatically.")
                 self._button("pause", "Pause", lambda: self._control("pause"), "Pause the robots of the running queue.")
@@ -274,8 +275,15 @@ class MissionWindow:
         self._draw()
 
     def _submit(self) -> None:
-        if self.selected_queue:
-            self.service.submit(self.selected_queue)
+        queue = self._selected()
+        if queue is None:
+            return
+        if queue.state.resubmit_replaces_run:
+            self._confirm("submit", "Submit again",
+                          "Submit queue {queue} again?\nIt runs from scratch; the progress of its last run is replaced.",
+                          self.service.submit)
+        else:
+            self.service.submit(queue.queue_id)
 
     def _control(self, command: str) -> None:
         if self.selected_queue:

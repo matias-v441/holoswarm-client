@@ -22,7 +22,7 @@ class QueueState(Enum):
     FINISHED = "FINISHED"
     CANCELLED = "CANCELLED"
     REJECTED = "REJECTED"        # staging failed; nothing ran, can be submitted again
-    INTERRUPTED = "INTERRUPTED"  # the fleet manager restarted while it ran
+    INTERRUPTED = "INTERRUPTED"  # the fleet manager (or the bridge) restarted while it ran
     UNKNOWN = "UNKNOWN"
 
     @property
@@ -36,7 +36,13 @@ class QueueState(Enum):
 
     @property
     def can_submit(self) -> bool:
-        return self in (QueueState.CREATED, QueueState.REJECTED)
+        """Not handed to the fleet manager: a done queue can be submitted again and runs from scratch."""
+        return not self.in_flight and self != QueueState.UNKNOWN
+
+    @property
+    def resubmit_replaces_run(self) -> bool:
+        """Submitting it again replaces the progress of a run that happened."""
+        return self in (QueueState.FINISHED, QueueState.CANCELLED, QueueState.INTERRUPTED)
 
     @property
     def can_start(self) -> bool:
@@ -44,7 +50,8 @@ class QueueState(Enum):
 
     @property
     def can_cancel(self) -> bool:
-        return self in (QueueState.UPLOADING, QueueState.READY, QueueState.RUNNING)
+        # INTERRUPTED by a bridge restart: the fleet manager may still run it
+        return self in (QueueState.UPLOADING, QueueState.READY, QueueState.RUNNING, QueueState.INTERRUPTED)
 
     @property
     def can_pause(self) -> bool:

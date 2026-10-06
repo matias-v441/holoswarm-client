@@ -85,11 +85,16 @@ class ExecutionStoreTest(unittest.TestCase):
         self.assertEqual(self.store.in_flight().queue_id, "B")
 
     def test_state_rules(self):
-        self.assertTrue(QueueState.CREATED.can_submit and QueueState.REJECTED.can_submit)
-        self.assertFalse(QueueState.READY.can_submit)
+        for state in (QueueState.CREATED, QueueState.REJECTED, QueueState.FINISHED, QueueState.CANCELLED, QueueState.INTERRUPTED):
+            self.assertTrue(state.can_submit, state)
+        for state in (QueueState.SUBMITTING, QueueState.UPLOADING, QueueState.READY, QueueState.RUNNING, QueueState.CANCELLING,
+                      QueueState.UNKNOWN):
+            self.assertFalse(state.can_submit, state)
+        self.assertTrue(QueueState.FINISHED.resubmit_replaces_run)
+        self.assertFalse(QueueState.CREATED.resubmit_replaces_run or QueueState.REJECTED.resubmit_replaces_run)
         self.assertTrue(QueueState.READY.can_start)
         self.assertFalse(QueueState.UPLOADING.can_start)
-        self.assertTrue(QueueState.UPLOADING.can_cancel)
+        self.assertTrue(QueueState.UPLOADING.can_cancel and QueueState.INTERRUPTED.can_cancel)
         self.assertFalse(QueueState.CREATED.can_cancel)
         for state in (QueueState.CREATED, QueueState.REJECTED, QueueState.FINISHED, QueueState.CANCELLED, QueueState.INTERRUPTED):
             self.assertTrue(state.can_delete, state)

@@ -416,6 +416,53 @@ class QueueExecutionTest(QueueTestCase):
         self.assertEqual(done["state"], "CANCELLED")
         self.assertEqual(done["missions"][1]["state"], "CANCELLED", "the remaining mission is dropped")
 
+    # | ----------------------- submitting again ----------------------- |
+
+    def assert_fresh_run(self, queue: dict) -> None:
+        """Staged again from scratch: nothing of the previous run is left."""
+        self.assertEqual(queue["state"], "READY", queue["message"])
+        self.assertEqual([m["state"] for m in queue["missions"]], ["STAGED", "QUEUED"])
+        for mission in queue["missions"]:
+            self.assertEqual(mission["progress"], 0.0, mission["id"])
+        self.assertEqual((queue["missions"][1]["robots"], queue["missions"][1]["message"]), ([], ""))
+
+    async def test_cancelled_queue_can_be_submitted_again(self):
+        ready = await self.submit_ready(self.routes(2))
+        self.assertEqual(ready["state"], "READY", ready["message"])
+        await self.client.control_queue(ready["queue_id"], "cancel")
+        cancelled = await self.wait_state(ready["queue_id"], "CANCELLED")
+        self.assertEqual([m["state"] for m in cancelled["missions"]], ["CANCELLED", "CANCELLED"])
+
+        await self.client.submit_queue(ready["queue_id"])
+        self.assert_fresh_run(await self.wait_state(ready["queue_id"], "READY", "REJECTED"))
+
+    async def test_finished_queue_runs_again(self):
+        if not self.env.can_run:
+            self.skipTest(f"robots of HOLOSWARM_TEST_STACK={self.env.name} do not fly")
+        ready = await self.submit_ready(self.routes(2))
+        queue_id = ready["queue_id"]
+        for run in (1, 2):
+            if run == 2:
+                await self.client.submit_queue(queue_id)
+                self.assert_fresh_run(await self.wait_state(queue_id, "READY", "REJECTED"))
+            await self.client.control_queue(queue_id, "start")
+            done = await self.wait_state(queue_id, *TERMINAL, timeout=3 * self.env.mission_timeout)
+            self.assertEqual(done["state"], "FINISHED", f"run {run}: {done['message']}")
+            for mission in done["missions"]:
+                self.assertEqual((mission["state"], mission["progress"]), ("SUCCEEDED", 1.0), f"run {run}: {mission['message']}")
+
+    async def test_refused_resubmit_keeps_the_last_run(self):
+        first = await self.submit_ready(self.routes(1))
+        await self.client.control_queue(first["queue_id"], "cancel")
+        cancelled = await self.wait_state(first["queue_id"], "CANCELLED")
+        second = await self.submit_ready(self.routes(1))
+        self.assertEqual(second["state"], "READY", second["message"])
+
+        await self.assert_refused(409, self.client.submit_queue(first["queue_id"]))
+        after = await self.client.queue(first["queue_id"])
+        self.assertEqual({k: v for k, v in after.items() if k != "updated_at"},
+                         {k: v for k, v in cancelled.items() if k != "updated_at"}, "the cancelled run is kept")
+
 
 class FleetManagerOutageTest(QueueTestCase):
     """The bridge keeps working when the fleet manager is down or restarts (its container is stopped/restarted)."""
@@ -573,6 +620,9 @@ class BridgeRestartTest(QueueTestCase):
 
     async def test_queues_survive_a_bridge_restart(self):
         created = await self.create([PRECISE_MISSION, *self.routes(1)], name="kept")
+        done = await self.submit_ready(self.routes(2))
+        await self.client.control_queue(done["queue_id"], "cancel")
+        done = await self.wait_state(done["queue_id"], "CANCELLED")
         staged = await self.submit_ready(self.routes(2))
         self.assertEqual(staged["state"], "READY", staged["message"])
         deleted = await self.create(self.routes(1))
@@ -588,6 +638,9 @@ class BridgeRestartTest(QueueTestCase):
         self.assertEqual([m["state"] for m in rejected["missions"]], ["QUEUED", "QUEUED"])
         await self.assert_refused(404, self.client.queue(deleted["queue_id"]))
         self.assertIn(created["queue_id"], [q["queue_id"] for q in (await self.client.workspace("temesvar"))["queues"]])
+        after = await self.client.queue(done["queue_id"])
+        self.assertEqual({k: v for k, v in after.items() if k != "updated_at"}, {k: v for k, v in done.items() if k != "updated_at"},
+                         "a done queue comes back with its last run")
 
         # The bridge releases the queue it left staged on the fleet manager, so it can be submitted again.
         deadline = time.time() + 30
@@ -600,6 +653,13 @@ class BridgeRestartTest(QueueTestCase):
                     raise
                 await asyncio.sleep(1.0)
         self.assertEqual((await self.wait_state(staged["queue_id"], "READY", "REJECTED"))["state"], "READY")
+
+        # The stored done queue can run again, from scratch.
+        await self.client.control_queue(staged["queue_id"], "cancel")
+        await self.wait_state(staged["queue_id"], "CANCELLED")
+        await self.client.submit_queue(done["queue_id"])
+        again = await self.wait_state(done["queue_id"], "READY", "REJECTED")
+        self.assertEqual((again["state"], [m["state"] for m in again["missions"]]), ("READY", ["STAGED", "QUEUED"]), again["message"])
 
 
 if __name__ == "__main__":
