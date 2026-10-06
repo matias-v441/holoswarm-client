@@ -4,6 +4,7 @@ Pure functions: no files are written and no identifiers are generated here. Call
 mission id (export, submission) and keep it stable across retries.
 """
 
+from dataclasses import replace
 from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
@@ -120,6 +121,29 @@ def encode_waypoints(
         })
 
     return {"type": WAYPOINT_PLANNER, "details": {"robots": robots}}
+
+
+def path_robots(tasks: Sequence[Waypoints], robot_names: Sequence[str]) -> list[str | None]:
+    """The robot of each path, as encode_waypoints() assigns them."""
+    return [task.assigned_robot or (robot_names[index] if index < len(robot_names) else None)
+            for index, task in enumerate(tasks)]
+
+
+def place_task(tasks: Sequence[MissionTask], task: MissionTask, robot_names: Sequence[str]) -> MissionTask | None:
+    """The new task as it can join a mission with these tasks, or None when it cannot.
+
+    A mission is one coverage area, or paths of different robots: a path joining paths gets a robot that has none
+    yet. Whether the geometry is complete (e.g. an area with 3 points) is not checked: it is still being drawn.
+    """
+    if not tasks:
+        return task
+    if isinstance(task, Coverage) or any(isinstance(t, Coverage) for t in tasks):
+        return None
+    used = set(path_robots(tasks, robot_names))
+    if task.assigned_robot:
+        return task if task.assigned_robot not in used else None
+    free = next((robot for robot in robot_names if robot not in used), None)
+    return replace(task, assigned_robot=free) if free else None
 
 
 def encode_draft(

@@ -265,6 +265,51 @@ class QueueStoreTest(QueueTestCase):
         self.assertEqual(await self.client.queue(queue["queue_id"]), queue)
 
 
+    # | ----------------------- change ----------------------- |
+
+    async def test_replace_keeps_the_queue_with_new_content(self):
+        queue = await self.create([load_mission("coverage.json")], name="before", params={"abort_on_failure": True})
+        queue_id = queue["queue_id"]
+        await asyncio.sleep(0.05)
+        missions = [{**PRECISE_MISSION, "name": "renamed"}, {**load_mission("coverage.json"), "id": "added"}]
+        replaced = await self.client.replace_queue(queue_id, "fleet", missions, name="after", params={"assignment_policy": "nearest"},
+                                                   world_id="w1")
+
+        self.assertEqual((replaced["queue_id"], replaced["created_at"], replaced["workspace"]),
+                         (queue_id, queue["created_at"], queue["workspace"]), "the same queue")
+        self.assertGreater(replaced["updated_at"], queue["updated_at"])
+        self.assertEqual((replaced["name"], replaced["scheduler"], replaced["params"], replaced["world_id"], replaced["state"]),
+                         ("after", "fleet", {"assignment_policy": "nearest"}, "w1", "CREATED"))
+        self.assertEqual([m["id"] for m in replaced["missions"]], ["precise", "added"])
+        self.assertEqual(replaced["missions"][0]["details"], PRECISE_MISSION["details"])
+        self.assertEqual((replaced["missions"][0]["name"], replaced["missions"][0]["priority"]), ("renamed", 3))
+        self.assertEqual({m["state"] for m in replaced["missions"]}, {"QUEUED"})
+        self.assertEqual(await self.client.queue(queue_id), replaced)
+        self.assertEqual((await self.queue_ids()).count(queue_id), 1)
+
+    async def test_replace_is_published(self):
+        queue = await self.create()
+        url = f"{self.client.ws_base_url}/queues/events"
+        async with websockets.connect(url) as ws:
+            await asyncio.sleep(0.2)
+            start = await self.client.queues()
+            replaced = await self.client.replace_queue(queue["queue_id"], "batch", [PRECISE_MISSION])
+            event = json.loads(await asyncio.wait_for(ws.recv(), 5))
+        self.assertEqual((event["type"], event["seq"], event["queue"]), ("queue", start["seq"] + 1, replaced))
+
+    async def test_invalid_replacements_are_refused(self):
+        queue = await self.create()
+        queue_id = queue["queue_id"]
+        await self.assert_refused(404, self.client.replace_queue(f"missing-{uuid.uuid4().hex[:8]}", "batch", [PRECISE_MISSION]))
+        await self.assert_refused(400, self.client.replace_queue(queue_id, "batch", []))
+        await self.assert_refused(400, self.client.replace_queue(queue_id, "", [PRECISE_MISSION]))
+        await self.assert_refused(400, self.client.replace_queue(queue_id, "batch", [PRECISE_MISSION, PRECISE_MISSION]))
+        await self.assert_refused(400, self.client._request_json("PUT", f"/queues/{queue_id}",
+                                                                 {"queue_id": "other", "scheduler": "batch", "missions": [PRECISE_MISSION]}))
+        await self.assert_refused(400, self.client._request_json("PUT", f"/queues/{queue_id}",
+                                                                 {"workspace": "nowhere", "scheduler": "batch", "missions": [PRECISE_MISSION]}))
+        self.assertEqual(await self.client.queue(queue_id), queue, "a refused change leaves the queue as it was")
+
     # | ----------------------- events ----------------------- |
 
     async def test_events_follow_the_store(self):
@@ -415,6 +460,23 @@ class QueueExecutionTest(QueueTestCase):
         done = await self.wait_state(ready["queue_id"], *TERMINAL, timeout=self.env.mission_timeout)
         self.assertEqual(done["state"], "CANCELLED")
         self.assertEqual(done["missions"][1]["state"], "CANCELLED", "the remaining mission is dropped")
+
+    # | ----------------------- change ----------------------- |
+
+    async def test_submitted_queue_cannot_be_changed_until_cancelled(self):
+        ready = await self.submit_ready(self.routes(1))
+        self.assertEqual(ready["state"], "READY", ready["message"])
+        error = await self.assert_refused(409, self.client.replace_queue(ready["queue_id"], "batch", self.routes(2)))
+        self.assertIn("READY", error.message)
+
+        await self.client.control_queue(ready["queue_id"], "cancel")
+        await self.wait_state(ready["queue_id"], "CANCELLED")
+        changed = await self.client.replace_queue(ready["queue_id"], "batch", self.routes(2))
+        self.assertEqual((changed["state"], [m["state"] for m in changed["missions"]]), ("CREATED", ["QUEUED", "QUEUED"]))
+
+        await self.client.submit_queue(ready["queue_id"])
+        again = await self.wait_state(ready["queue_id"], "READY", "REJECTED")
+        self.assertEqual((again["state"], [m["state"] for m in again["missions"]]), ("READY", ["STAGED", "QUEUED"]), again["message"])
 
     # | ----------------------- submitting again ----------------------- |
 
@@ -620,6 +682,9 @@ class BridgeRestartTest(QueueTestCase):
 
     async def test_queues_survive_a_bridge_restart(self):
         created = await self.create([PRECISE_MISSION, *self.routes(1)], name="kept")
+        changed = await self.create(self.routes(1), name="before")
+        # Right after creating it, with the same number of missions and states: only the content changes, which must be saved anyway.
+        changed = await self.client.replace_queue(changed["queue_id"], "batch", [PRECISE_MISSION], name="after")
         done = await self.submit_ready(self.routes(2))
         await self.client.control_queue(done["queue_id"], "cancel")
         done = await self.wait_state(done["queue_id"], "CANCELLED")
@@ -638,6 +703,9 @@ class BridgeRestartTest(QueueTestCase):
         self.assertEqual([m["state"] for m in rejected["missions"]], ["QUEUED", "QUEUED"])
         await self.assert_refused(404, self.client.queue(deleted["queue_id"]))
         self.assertIn(created["queue_id"], [q["queue_id"] for q in (await self.client.workspace("temesvar"))["queues"]])
+        after = await self.client.queue(changed["queue_id"])
+        self.assertEqual({k: v for k, v in after.items() if k != "updated_at"}, {k: v for k, v in changed.items() if k != "updated_at"},
+                         "a changed queue comes back with its new content")
         after = await self.client.queue(done["queue_id"])
         self.assertEqual({k: v for k, v in after.items() if k != "updated_at"}, {k: v for k, v in done.items() if k != "updated_at"},
                          "a done queue comes back with its last run")

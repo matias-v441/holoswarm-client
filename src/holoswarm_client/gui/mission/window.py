@@ -1,8 +1,11 @@
 import dearpygui.dearpygui as dpg
 import time
+from collections.abc import Callable
 
 from holoswarm_client.data.execution import ExecutionStore, MissionState, QueueExecution, QueueState, SyncState
 from holoswarm_client.data.queue_draft import QueueDraft
+from holoswarm_client.data.queue_view import QueueView
+from holoswarm_client.data.session import Session
 from holoswarm_client.services.queues import CREATING, QueueService
 
 STATE_COLORS = {
@@ -27,22 +30,38 @@ TEXT = (220, 220, 220)
 
 DEFAULT_SCHEDULERS = ["batch", "fleet"]
 ASSIGNMENT_POLICIES = ["round_robin", "nearest", "fifo"]
+WARN = (230, 190, 90)
+RED = (230, 90, 90)
 
 
 class MissionWindow:
-    """The next queue being put together, the queues kept by the bridge, and the missions of the selected one."""
+    """The selected queue in the editor (the new one, or a stored one: edited, or read-only while submitted), the
+    queues kept by the bridge, and the missions of the selected queue.
 
-    def __init__(self, service: QueueService, executions: ExecutionStore, draft: QueueDraft) -> None:
+    Selection (in the session) is queue > mission > task: clicking a queue opens it in the editor, the map and the
+    Task window; clicking a mission selects it (and its first task), which the map shows in orange.
+    """
+
+    def __init__(self, service: QueueService, executions: ExecutionStore, draft: QueueDraft, session: Session,
+                 view: QueueView | None = None) -> None:
         self.service = service
         self.executions = executions
         self.draft = draft
+        self.session = session
+        self.view = view
         self.window_tag = "mission_window"
-        self.selected_queue: str | None = None
+        self._started = False  # the first snapshot selected a queue
+        self._shown_selection: tuple[str | None, str | None] | None = None
         self._last_sync: SyncState | None = None
         self._schedulers: list[str] = []
         executions.subscribe(lambda _: self._draw())
         draft.subscribe(lambda _: self._draw_draft())
+        session.subscribe(lambda _: self._selection_changed())
         service.on_message(self._show_message)
+
+    @property
+    def selected_queue(self) -> str | None:
+        return self.session.selected_queue
 
     def _t(self, name: str) -> str:
         return f"{self.window_tag}_{name}"
@@ -59,9 +78,9 @@ class MissionWindow:
             dpg.add_text("", tag=self._t("sync"))
             dpg.add_text("", tag=self._t("message"), wrap=0)
 
-            with dpg.collapsing_header(label="New queue", default_open=True):
-                dpg.add_text("Add missions with 'Add to queue' in the Path window. They run in this order.",
-                             color=GREY, wrap=0)
+            with dpg.collapsing_header(label="New queue", tag=self._t("editor"), default_open=True):
+                dpg.add_text("", tag=self._t("editor_hint"), color=GREY, wrap=0)
+                dpg.add_text("", tag=self._t("editor_note"), color=WARN, wrap=0, show=False)
                 with dpg.table(tag=self._t("draft"), header_row=True, resizable=True, row_background=True,
                                borders_innerH=True, borders_outerH=True, policy=dpg.mvTable_SizingStretchProp):
                     dpg.add_table_column(label="#", width_fixed=True, init_width_or_weight=20)
@@ -69,31 +88,40 @@ class MissionWindow:
                         dpg.add_table_column(label=label)
                     dpg.add_table_column(label="", width_fixed=True, init_width_or_weight=80)
                 with dpg.group(horizontal=True):
-                    dpg.add_input_text(label="Queue name", tag=self._t("queue_name"), width=200)
+                    dpg.add_input_text(label="Queue name", tag=self._t("queue_name"), width=200, callback=self._name_changed)
                     dpg.add_combo(DEFAULT_SCHEDULERS, label="Scheduler", tag=self._t("scheduler"), default_value="batch",
-                                  width=120, callback=self._update_scheduler_options)
+                                  width=120, callback=self._settings_changed)
                 with dpg.group(tag=self._t("batch_options")):
                     dpg.add_text("Runs the missions one after another, each on all of its robots.", color=GREY, wrap=0)
-                    dpg.add_checkbox(label="Cancel the remaining missions after a failure", tag=self._t("abort_on_failure"))
+                    dpg.add_checkbox(label="Cancel the remaining missions after a failure", tag=self._t("abort_on_failure"),
+                                     callback=self._settings_changed)
                 with dpg.group(tag=self._t("fleet_options"), show=False):
                     dpg.add_text("Splits missions into tasks for any capable idle robot. Waypoint routes stay with their robot.",
                                  color=GREY, wrap=0)
                     dpg.add_combo(ASSIGNMENT_POLICIES, label="Assignment", tag=self._t("assignment_policy"),
-                                  default_value=ASSIGNMENT_POLICIES[0], width=160)
+                                  default_value=ASSIGNMENT_POLICIES[0], width=160, callback=self._settings_changed)
                 with dpg.group(horizontal=True):
-                    dpg.add_button(label="Create queue", tag=self._t("create"), callback=self._create)
-                    with dpg.tooltip(self._t("create")):
-                        dpg.add_text("Store the queue on the server with all of its missions.\n"
-                                     "Nothing is sent to the robots until it is submitted.")
+                    self._button("create", "Create queue", self._create,
+                                 "Store the queue on the server with all of its missions.\n"
+                                 "Nothing is sent to the robots until it is submitted.")
+                    self._button("new_mission", "New mission", self._new_mission,
+                                 "Add an empty mission and select it; Ctrl+click on the map draws its paths or area.")
                     dpg.add_button(label="Clear", tag=self._t("clear"), callback=lambda: self.draft.clear())
+                    self._button("upload", "Upload changes", lambda: self.service.upload(),
+                                 "Replace the queue on the server with this copy. It keeps its id and becomes CREATED;\n"
+                                 "the progress of its last run is dropped.")
+                    self._button("revert", "Revert", self._confirm_revert, "Drop the changes: load the queue from the server again.")
 
             dpg.add_separator()
             dpg.add_text("Queues")
             with dpg.group(horizontal=True):
+                self._button("new_queue", "New queue", self._confirm_close,
+                             "Put together a new queue in the editor. The new queue started before comes back.")
                 self._button("submit", "Submit", self._submit,
                              "Hand the queue to the fleet manager. It plans the first step and uploads it to the robots;\n"
                              "nothing moves until Start. Only one queue can be submitted at a time.\n"
-                             "A finished, cancelled or interrupted queue runs again from scratch.")
+                             "A finished, cancelled or interrupted queue runs again from scratch.\n"
+                             "A queue being edited is submitted once its changes are uploaded or reverted.")
                 self._button("start", "Start", lambda: self._control("start"),
                              "Start the uploaded goals; the rest of the queue follows automatically.")
                 self._button("pause", "Pause", lambda: self._control("pause"), "Pause the robots of the running queue.")
@@ -149,14 +177,30 @@ class MissionWindow:
         if not dpg.does_item_exist(self._t("draft")):
             return
         self._clear_rows(self._t("draft"))
+        self._shown_selection = (self.session.selected_queue, self.session.selected_mission)
         missions = self.draft.missions
+        read_only = self.draft.read_only
         for index, mission in enumerate(missions):
             with dpg.table_row(parent=self._t("draft")):
                 dpg.add_text(str(index + 1))
-                dpg.add_input_text(default_value=mission.name, width=-1, user_data=mission.mission_id,
-                                   callback=lambda s, value, mission_id: self.draft.rename(mission_id, value))
+                if read_only:
+                    dpg.add_text(mission.name)
+                else:
+                    dpg.add_input_text(default_value=mission.name, width=-1, user_data=mission.mission_id,
+                                       callback=self._rename_mission)
                 dpg.add_text(mission.planner_type)
-                dpg.add_text(mission.summary, wrap=0)
+                with dpg.group():
+                    dpg.add_selectable(label=mission.summary or "(no path or area yet)",
+                                       default_value=mission.mission_id == self.session.selected_mission,
+                                       user_data=mission.mission_id, callback=lambda s, a, mission_id: self._select_mission(mission_id))
+                    with dpg.tooltip(dpg.last_item()):
+                        dpg.add_text("Select the mission: the map shows it in orange and the Task window its first path or area.")
+                    error = self.draft.error(mission.mission_id)
+                    if error and not read_only:
+                        dpg.add_text(error, color=RED, wrap=0)
+                if read_only:
+                    dpg.add_text("")
+                    continue
                 with dpg.group(horizontal=True):
                     dpg.add_button(arrow=True, direction=dpg.mvDir_Up, enabled=index > 0, user_data=mission.mission_id,
                                    callback=lambda s, a, mission_id: self.draft.move(mission_id, -1))
@@ -164,17 +208,23 @@ class MissionWindow:
                                    user_data=mission.mission_id, callback=lambda s, a, mission_id: self.draft.move(mission_id, 1))
                     dpg.add_button(label="x", user_data=mission.mission_id,
                                    callback=lambda s, a, mission_id: self.draft.remove(mission_id))
+        self._show_settings()
         self._update_draft_controls()
+        self._update_controls()
 
     def _draw(self) -> None:
         if not dpg.does_item_exist(self._t("queues")):
             return
         self._update_schedulers()
 
-        queues = list(self.executions.queues.values())
-        if self.selected_queue not in self.executions.queues:
+        if not self._started and self.executions.session_id is not None:
+            # The first snapshot: show the queue that holds the robots, if any.
+            self._started = True
             in_flight = self.executions.in_flight()
-            self.selected_queue = (in_flight or queues[-1]).queue_id if queues else None
+            if in_flight is not None and not self.draft.editing:
+                self._load(in_flight.queue_id)
+        self._sync_edited()
+        queues = list(self.executions.queues.values())
 
         self._clear_rows(self._t("queues"))
         for queue in queues:
@@ -205,9 +255,11 @@ class MissionWindow:
             return
         for mission in queue.missions.values():
             with dpg.table_row(parent=self._t("missions")):
-                dpg.add_text(mission.display_name)
+                dpg.add_selectable(label=mission.display_name, span_columns=True, user_data=mission.mission_id,
+                                   default_value=mission.mission_id == self.session.selected_mission,
+                                   callback=lambda s, a, mission_id: self._select_mission(mission_id))
                 with dpg.tooltip(dpg.last_item()):
-                    dpg.add_text(mission.mission_id)
+                    dpg.add_text(f"{mission.mission_id}\nClick to select it (shown in orange on the map).")
                 dpg.add_text(mission.planner_type)
                 dpg.add_text(mission.state.value, color=STATE_COLORS.get(mission.state, TEXT))
                 dpg.add_text(", ".join(mission.robots))
@@ -218,7 +270,8 @@ class MissionWindow:
         queue = self._selected()
         idle = queue is not None and queue.queue_id not in self.service.pending
         state = queue.state if queue else QueueState.UNKNOWN
-        dpg.configure_item(self._t("submit"), enabled=idle and state.can_submit)
+        unsaved = queue is not None and queue.queue_id == self.draft.queue_id and self.draft.dirty
+        dpg.configure_item(self._t("submit"), enabled=idle and state.can_submit and not unsaved)
         dpg.configure_item(self._t("start"), enabled=idle and state.can_start)
         dpg.configure_item(self._t("pause"), enabled=idle and state.can_pause and not queue.paused)
         dpg.configure_item(self._t("resume"), enabled=idle and state.can_pause and queue.paused)
@@ -228,10 +281,117 @@ class MissionWindow:
     def _update_draft_controls(self) -> None:
         if not dpg.does_item_exist(self._t("create")):
             return
-        creating = CREATING in self.service.pending
-        dpg.configure_item(self._t("create"), enabled=len(self.draft) > 0 and not creating,
-                           label="Creating..." if creating else "Create queue")
-        dpg.configure_item(self._t("clear"), enabled=len(self.draft) > 0 and not creating)
+        draft = self.draft
+        editing, read_only, dirty = draft.editing, draft.read_only, draft.dirty
+        problems = draft.problems
+        for name in ("create", "clear"):
+            dpg.configure_item(self._t(name), show=not editing)
+        for name in ("upload", "revert"):
+            dpg.configure_item(self._t(name), show=editing and (not read_only or dirty))
+        dpg.configure_item(self._t("new_queue"), enabled=editing)
+        dpg.configure_item(self._t("new_mission"), show=not read_only)
+        for name in ("queue_name", "scheduler", "abort_on_failure", "assignment_policy"):
+            dpg.configure_item(self._t(name), enabled=not read_only)
+
+        problem = ""
+        if problems:
+            mission, text = problems[0]
+            problem = f"Mission '{mission.name or mission.mission_id}': {text}"
+
+        if not editing:
+            creating = CREATING in self.service.pending
+            dpg.configure_item(self._t("editor"), label="New queue")
+            dpg.set_value(self._t("editor_hint"),
+                          "Missions run in this order. 'New mission', then Ctrl+click on the map draws its paths or area.\n"
+                          "Click a mission to select it; click a queue below to open it here.")
+            dpg.set_value(self._t("editor_note"), problem)
+            dpg.configure_item(self._t("editor_note"), show=bool(problem))
+            dpg.configure_item(self._t("create"), enabled=len(draft) > 0 and not creating and not problems,
+                               label="Creating..." if creating else "Create queue")
+            dpg.configure_item(self._t("clear"), enabled=len(draft) > 0 and not creating)
+            return
+
+        queue = self.executions.queue(draft.queue_id)
+        label = queue.display_name if queue else draft.queue_id
+        pending = draft.queue_id in self.service.pending
+        editable = queue is not None and queue.state.can_submit
+        if read_only and not dirty:
+            dpg.configure_item(self._t("editor"), label=f"Queue {label} (read-only)")
+            dpg.set_value(self._t("editor_hint"), "Click a mission to select it on the map.")
+        else:
+            dpg.configure_item(self._t("editor"), label=f"Edit queue {label}" + (" *" if dirty else ""))
+            dpg.set_value(self._t("editor_hint"),
+                          "A copy of the queue: change it like a new queue, then upload it. It stays the same queue.")
+        if queue is None:
+            note = "The queue was deleted on the server; the changes cannot be uploaded."
+        elif not editable:
+            note = (f"The queue is {queue.state.value}: " +
+                    ("cancel it to upload the changes." if dirty else "shown read-only; cancel it to change it."))
+        elif problem:
+            note = problem
+        elif draft.outdated:
+            note = "The queue changed on the server since it was loaded; uploading replaces those changes."
+        else:
+            note = ""
+        dpg.set_value(self._t("editor_note"), note)
+        dpg.configure_item(self._t("editor_note"), show=bool(note))
+        dpg.configure_item(self._t("upload"), enabled=dirty and editable and not pending and len(draft) > 0 and not problems,
+                           label="Uploading..." if pending and dirty else "Upload changes")
+        dpg.configure_item(self._t("revert"), enabled=dirty and queue is not None and not pending)
+
+    def _show_settings(self) -> None:
+        """The widgets show the settings of the draft (new or edited queue)."""
+        settings = self.draft.settings
+        dpg.set_value(self._t("queue_name"), settings.name)
+        dpg.set_value(self._t("scheduler"), settings.scheduler)
+        dpg.set_value(self._t("abort_on_failure"), bool(settings.params.get("abort_on_failure", False)))
+        policy = settings.params.get("assignment_policy")
+        dpg.set_value(self._t("assignment_policy"), policy if policy in ASSIGNMENT_POLICIES else ASSIGNMENT_POLICIES[0])
+        self._update_scheduler_options()
+
+    def _settings_changed(self, *_args) -> None:
+        """A scheduler widget changed: the draft's params follow; params without a widget stay with their scheduler."""
+        scheduler = dpg.get_value(self._t("scheduler"))
+        settings = self.draft.settings
+        params = dict(settings.params) if scheduler == settings.scheduler else {}
+        if scheduler == "batch":
+            if dpg.get_value(self._t("abort_on_failure")):
+                params["abort_on_failure"] = True
+            else:
+                params.pop("abort_on_failure", None)
+        if scheduler == "fleet":
+            params["assignment_policy"] = dpg.get_value(self._t("assignment_policy"))
+        self.draft.set_settings(scheduler=scheduler, params=params)
+        self._update_scheduler_options()
+        self._update_draft_controls()
+        self._update_controls()
+
+    def _name_changed(self, sender, value: str) -> None:
+        self.draft.set_settings(name=value)
+        self._update_draft_controls()
+        self._update_controls()
+
+    def _rename_mission(self, sender, value: str, mission_id: str) -> None:
+        self.draft.rename(mission_id, value)
+        self._update_draft_controls()
+        self._update_controls()
+
+    def _sync_edited(self) -> None:
+        """The opened queue follows the server unless it has changes; a deleted one goes back to the new queue."""
+        if not self.draft.editing:
+            return
+        queue = self.executions.queue(self.draft.queue_id)
+        if queue is not None:
+            self.draft.sync(queue)
+        elif not self.draft.dirty:
+            self._close()
+
+    def _selection_changed(self) -> None:
+        """The highlighted queue and mission follow the session (a mission may be selected on the map)."""
+        if self._shown_selection is None or (self.session.selected_queue, self.session.selected_mission) == self._shown_selection:
+            return
+        self._draw()
+        self._draw_draft()
 
     def _update_schedulers(self) -> None:
         schedulers = self.service.schedulers or DEFAULT_SCHEDULERS
@@ -240,8 +400,9 @@ class MissionWindow:
         self._schedulers = list(schedulers)
         current = dpg.get_value(self._t("scheduler"))
         dpg.configure_item(self._t("scheduler"), items=self._schedulers)
-        if current not in self._schedulers:
+        if current not in self._schedulers and not self.draft.editing:
             dpg.set_value(self._t("scheduler"), "batch" if "batch" in self._schedulers else self._schedulers[0])
+            self._settings_changed()
         self._update_scheduler_options()
 
     def _update_scheduler_options(self, *_args) -> None:
@@ -259,20 +420,62 @@ class MissionWindow:
     # | ----------------------- actions ----------------------- |
 
     def _create(self) -> None:
-        scheduler = dpg.get_value(self._t("scheduler"))
-        params = {}
-        if scheduler == "batch" and dpg.get_value(self._t("abort_on_failure")):
-            params["abort_on_failure"] = True
-        if scheduler == "fleet":
-            params["assignment_policy"] = dpg.get_value(self._t("assignment_policy"))
-        name = dpg.get_value(self._t("queue_name")).strip()
-        if self.service.create(scheduler, name=name, params=params) is not None:
+        if self.service.create() is not None:
+            self.draft.set_settings(name="")
             dpg.set_value(self._t("queue_name"), "")
         self._update_draft_controls()
 
     def _select_queue(self, sender, app_data, queue_id: str) -> None:
-        self.selected_queue = queue_id
-        self._draw()
+        """Open the queue in the editor, the map and the Task window (read-only while it is submitted)."""
+        queue = self.executions.queue(queue_id)
+        if queue is None or queue_id == self.draft.queue_id:
+            self._draw()  # the clicked row toggled itself
+            return
+        if self.draft.dirty:
+            edited = self.executions.queue(self.draft.queue_id)
+            self._ask("discard", "Discard changes",
+                      f"Discard the changes to queue {edited.display_name if edited else self.draft.queue_id}\n"
+                      f"and open queue {queue.display_name}?",
+                      lambda: self._load(queue_id))
+            self._draw()
+        else:
+            self._load(queue_id)
+
+    def _load(self, queue_id: str) -> None:
+        queue = self.executions.queue(queue_id)
+        if queue is not None:
+            self.draft.load(queue)
+            self.session.select_queue(queue_id)
+
+    def _close(self) -> None:
+        self.draft.close()
+        self.session.select_queue(None)
+
+    def _confirm_revert(self) -> None:
+        self._ask("revert", "Revert", "Drop the changes and load the queue from the server again?",
+                  lambda: self._load(self.draft.queue_id))
+
+    def _confirm_close(self) -> None:
+        if self.draft.dirty:
+            self._ask("new_queue", "New queue", "Drop the changes to this queue and go back to the new queue?", self._close)
+        else:
+            self._close()
+
+    def _new_mission(self) -> None:
+        if self.draft.read_only:
+            return
+        mission = self.draft.add_empty()
+        self.session.select_mission(mission.mission_id)
+
+    def _select_mission(self, mission_id: str) -> None:
+        """Select a mission of the opened queue: its first task too, and the map shows it."""
+        if self.draft.mission(mission_id) is None:
+            self._draw_draft()
+            return
+        self.session.select_mission(mission_id)
+        if self.view is not None:
+            self.view.focus_mission(mission_id)
+        self._draw_draft()  # the clicked selectable toggled itself
 
     def _submit(self) -> None:
         queue = self._selected()
@@ -290,18 +493,22 @@ class MissionWindow:
             self.service.control(self.selected_queue, command)
 
     def _confirm(self, name: str, title: str, text: str, action) -> None:
+        """Ask before acting on the selected queue."""
         queue = self._selected()
         if queue is None:
             return
+        self._ask(name, title, text.format(queue=queue.display_name), lambda: action(queue.queue_id))
+
+    def _ask(self, name: str, title: str, text: str, action: Callable[[], None]) -> None:
         tag = self._t(f"confirm_{name}")
         if dpg.does_item_exist(tag):
             dpg.delete_item(tag)
         with dpg.window(label=title, tag=tag, modal=True, autosize=True, no_collapse=True, on_close=lambda: dpg.delete_item(tag)):
-            dpg.add_text(text.format(queue=queue.display_name))
+            dpg.add_text(text)
             with dpg.group(horizontal=True):
                 def confirm() -> None:
                     dpg.delete_item(tag)
-                    action(queue.queue_id)
+                    action()
                 dpg.add_button(label=title, callback=confirm)
                 dpg.add_button(label="Keep", callback=lambda: dpg.delete_item(tag))
 

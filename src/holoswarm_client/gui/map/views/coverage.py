@@ -16,14 +16,21 @@ class CoveragePrimitive:
         self.session = map.session
         self.drawlist_tag = drawlist_tag
         self.task_uuid = task_uuid
-        self.mission.subscribe(lambda _: self.draw())
-        self.session.subscribe(lambda _: self.draw())
+        self._redraw = lambda _: self.draw()
+        self.mission.subscribe(self._redraw)
+        self.session.subscribe(self._redraw)
         self.map = map
         self.items = set()
 
     @property
     def active(self):
         return self.task_uuid in self.mission.tasks
+
+    def dispose(self) -> None:
+        """The task is gone: stop drawing it."""
+        self.mission.unsubscribe(self._redraw)
+        self.session.unsubscribe(self._redraw)
+        self.delete()
 
     def delete(self) -> None:
         for item in self.items:
@@ -52,12 +59,14 @@ class CoveragePrimitive:
             for latitude, longitude in coverage.points
         ]
         selected = self.session.item_selected(coverage.uuid)
+        # Tasks of the selected mission (or one being drawn) in orange, the rest of the queue grey.
+        in_mission = coverage.mission_id is None or coverage.mission_id == self.session.selected_mission
 
         self.items.add(dpg.draw_polygon(
             canvas_points,
-            color=(255, 255, 255, 255) if selected else (255, 205, 89, 235),
-            fill=(255, 225, 126, 80) if self._hovered else (255, 205, 89, 40),
-            thickness=3 if selected else 2,
+            color=(255, 255, 255, 255) if selected else (255, 205, 89, 235) if in_mission else (150, 150, 150, 170),
+            fill=((255, 225, 126, 80) if self._hovered else (255, 205, 89, 40)) if in_mission else (150, 150, 150, 30),
+            thickness=3 if selected else 2 if in_mission else 1.5,
             parent=self.drawlist_tag,
         ))
 

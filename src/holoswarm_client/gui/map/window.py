@@ -1,11 +1,11 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from PIL import Image
 from io import BytesIO
 import numpy as np
 from math import floor
 import dearpygui.dearpygui as dpg
 
-from holoswarm_client.data.mission import Mission
+from holoswarm_client.data.mission import Coverage, Mission, MissionTask, PointGlobal, PointLocal, Waypoints
 from holoswarm_client.gui.map.map import Map, ToolType
 from holoswarm_client.gui.map.controller import Controller
 from holoswarm_client.gui.map.handlers.map_grid import MapGridHandlers
@@ -132,6 +132,9 @@ class MapGridWindow:
 
 
     def _mission_callback(self, mission: Mission) -> None:
+        for view in self._tracked_primitives.values():
+            if not view.active:
+                view.dispose()
         self._tracked_primitives = {
             uuid: view
             for uuid,view in self._tracked_primitives.items()
@@ -326,6 +329,29 @@ class MapGridWindow:
         self.safety_area.world_active = self.map.world_name in self.active_worlds
         self.safety_area.draw()
         self.cursor.draw()
+
+    def focus_tasks(self, tasks: Sequence[MissionTask]) -> None:
+        """Centre the view on the paths and areas, zooming out when they do not fit."""
+        points: list[Point] = []
+        for task in tasks:
+            if isinstance(task, Coverage):
+                points += [self.map.latlon_to_world(lat, lon) for lat, lon in task.points]
+            elif isinstance(task, Waypoints):
+                for point in task.points:
+                    if isinstance(point, PointGlobal):
+                        points.append(self.map.latlon_to_world(point.lat, point.lon))
+                    elif isinstance(point, PointLocal):
+                        points.append(point.position[:2])
+        if not points:
+            return
+        xs, ys = [p[0] for p in points], [p[1] for p in points]
+        if self.map.width > 0 and self.map.height > 0:
+            fit = max((max(xs) - min(xs)) / (0.8 * self.map.width), (max(ys) - min(ys)) / (0.8 * self.map.height))
+            if fit > self.map.meters_per_pixel:
+                self.map.meters_per_pixel = min(fit, self.map.max_meters_per_pixel)
+        centre = ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
+        self.map.pan_px = [-centre[0] / self.map.meters_per_pixel, centre[1] / self.map.meters_per_pixel]
+        self._ui_events.put(self._draw)
 
     def _tool_picked(self, tool: ToolType) -> None:
         self.map.active_tool = tool

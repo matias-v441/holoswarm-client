@@ -9,6 +9,8 @@ from holoswarm_client.gui.explorer.window import ExplorerWindow
 from holoswarm_client.gui.mission.window import MissionWindow
 from holoswarm_client.data.execution import ExecutionStore
 from holoswarm_client.data.queue_draft import QueueDraft
+from holoswarm_client.data.queue_view import QueueView
+from holoswarm_client.iroc.mission_codec import describe
 from holoswarm_client.services.queues import QueueService
 
 from holoswarm_client.gui.listeners.telemetry import TelemetryListener
@@ -111,10 +113,13 @@ def main():
     map_window = MapGridWindow(map, client, api_loop, workspace=args.workspace)
     map_window.add()
 
+    # The map shows every mission of the selected queue; edits on it re-encode their mission right away.
+    queue_view = QueueView(mission, session, queue_draft, on_focus=map_window.focus_tasks)
+
     explorer = ExplorerWindow(mission, session, queue_draft)
     explorer.add()
 
-    mission_window = MissionWindow(queue_service, executions, queue_draft)
+    mission_window = MissionWindow(queue_service, executions, queue_draft, session, view=queue_view)
     mission_window.add()
 
     robots: list[UAVWindow] = []
@@ -133,7 +138,10 @@ def main():
     queue_service.start()
 
     if args.mission_path:
-        mission.from_json(json.loads(Path(args.mission_path).read_bytes()))
+        # A mission of the new queue.
+        loaded = json.loads(Path(args.mission_path).read_bytes())
+        payload = {"type": loaded["type"], "details": loaded["details"]}
+        queue_draft.add(payload, describe(payload), name=Path(args.mission_path).stem)
 
     dpg.create_viewport(title="holoswarm client", width=1000, height=700)
     dpg.setup_dearpygui()

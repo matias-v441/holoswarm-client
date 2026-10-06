@@ -245,18 +245,23 @@ class IROCClient:
         workspace: str | None = None,
     ) -> dict[str, Any]:
         """Store a queue with all of its missions on the bridge (in the default workspace unless given). Returns the queue."""
-        payload: dict[str, Any] = {"scheduler": scheduler, "missions": missions}
+        payload = self._queue_body(scheduler, missions, name, params, world_id, workspace)
         if queue_id:
             payload["queue_id"] = queue_id
-        if workspace:
-            payload["workspace"] = workspace
-        if name:
-            payload["name"] = name
-        if params:
-            payload["params"] = params
-        if world_id:
-            payload["world_id"] = world_id
         return self._queue_of(await self._request_json("POST", "/queues", payload))
+
+    async def replace_queue(
+        self,
+        queue_id: str,
+        scheduler: str,
+        missions: list[dict[str, Any]],
+        name: str | None = None,
+        params: dict[str, Any] | None = None,
+        world_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Replace a queue that is not submitted as a whole (same id, CREATED again). Returns the queue."""
+        payload = self._queue_body(scheduler, missions, name, params, world_id)
+        return self._queue_of(await self._request_json("PUT", _path(queue_id), payload))
 
     async def delete_queue(self, queue_id: str) -> None:
         await self._request_json("DELETE", _path(queue_id))
@@ -316,6 +321,20 @@ class IROCClient:
         except (KeyError, ValueError) as exc:
             raise ApiError(response.status_code, f"Map without valid X-Map-Bounds header: {exc}") from exc
         return response.content, (west, south, east, north)
+
+    @staticmethod
+    def _queue_body(scheduler: str, missions: list[dict[str, Any]], name: str | None, params: dict[str, Any] | None,
+                    world_id: str | None, workspace: str | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {"scheduler": scheduler, "missions": missions}
+        if workspace:
+            payload["workspace"] = workspace
+        if name:
+            payload["name"] = name
+        if params:
+            payload["params"] = params
+        if world_id:
+            payload["world_id"] = world_id
+        return payload
 
     @staticmethod
     def _queue_of(body: dict[str, Any]) -> dict[str, Any]:

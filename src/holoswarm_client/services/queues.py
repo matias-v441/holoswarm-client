@@ -5,8 +5,9 @@ results come back to the GUI thread as closures through a SimpleQueue drained by
 so stores and widgets are only touched on the GUI thread.
 
 A queue is created once with all of its missions (from the QueueDraft), then submitted (the fleet
-manager stages its first step on the robots) and started. The bridge keeps the queues, so nothing
-is persisted here.
+manager stages its first step on the robots) and started. While it is not submitted it can be
+edited: the draft loads a copy and upload() replaces the stored queue with it (same id). The bridge
+keeps the queues, so nothing is persisted here.
 """
 
 import asyncio
@@ -20,7 +21,7 @@ from typing import Any, Mapping
 
 import websockets
 
-from holoswarm_client.data.execution import ExecutionStore, SyncState
+from holoswarm_client.data.execution import ExecutionStore, QueueExecution, SyncState
 from holoswarm_client.data.queue_draft import QueueDraft
 from holoswarm_client.iroc.client import ApiError, IROCClient, TransportError
 
@@ -98,15 +99,21 @@ class QueueService:
 
         asyncio.run_coroutine_threadsafe(fetch(), self.api_loop)
 
-    def create(self, scheduler: str, name: str = "", params: Mapping[str, Any] | None = None) -> Future | None:
-        """Create a queue from the whole draft. The draft keeps its missions until the bridge has the queue."""
+    def create(self) -> Future | None:
+        """Create a queue from the whole (new queue) draft. The draft keeps its missions until the bridge has the queue."""
+        if self.draft.editing:
+            return None
         missions = self.draft.missions
         if not missions:
             self._emit_message("Add missions to the new queue first.", False)
             return None
         if CREATING in self.pending:
             return None
+        if not self._sendable("Queue not created"):
+            return None
 
+        settings = self.draft.settings
+        name = settings.name.strip()
         queue_id = f"q-{uuid.uuid4().hex[:12]}"
         wire = [m.to_wire() for m in missions]
         sent = {m.mission_id for m in missions}
@@ -114,8 +121,8 @@ class QueueService:
 
         async def run() -> bool:
             try:
-                await self.client.create_queue(scheduler, wire, queue_id=queue_id, name=name or None, params=dict(params or {}),
-                                               workspace=self.workspace)
+                await self.client.create_queue(settings.scheduler, wire, queue_id=queue_id, name=name or None,
+                                               params=dict(settings.params), workspace=self.workspace)
             except ApiError as exc:
                 self._post_message(f"Queue not created: {exc.message}", False)
                 return False
@@ -134,13 +141,46 @@ class QueueService:
                     return False
 
             def created() -> None:
-                self.draft.clear(sent)
+                self.draft.forget_created(sent)
                 self._emit_message(f"Queue {label} created with {len(wire)} mission(s). Submit it to stage the first step on the robots.", True)
 
             self._post(created)
             return True
 
         return self._run(CREATING, run())
+
+    def upload(self) -> Future | None:
+        """Replace the stored queue being edited with the draft (same id). It becomes CREATED, its last run is dropped."""
+        queue_id = self.draft.queue_id
+        if queue_id is None:
+            return None
+        if not self.draft.missions:
+            self._emit_message("A queue needs at least one mission.", False)
+            return None
+        if self.draft.read_only or not self._sendable("Queue not changed"):
+            return None
+        settings = self.draft.settings
+        wire = [m.to_wire() for m in self.draft.missions]
+        label = self._label(queue_id)
+
+        async def run() -> None:
+            try:
+                stored = await self.client.replace_queue(queue_id, settings.scheduler, wire, name=settings.name.strip() or None,
+                                                         params=dict(settings.params), world_id=settings.world_id or None)
+            except ApiError as exc:
+                self._post_message(f"Queue {label} not changed: {exc.message}", False)
+                return
+            except TransportError as exc:
+                self._post_message(f"No answer while changing queue {label} ({exc}); its content shows the outcome.", False)
+                return
+
+            def replaced() -> None:
+                self.draft.sync(QueueExecution.from_json(stored))
+                self._emit_message(f"Queue {label} changed. Submit it to run it.", True)
+
+            self._post(replaced)
+
+        return self._run(queue_id, run())
 
     def submit(self, queue_id: str) -> Future | None:
         label = self._label(queue_id)
@@ -191,6 +231,14 @@ class QueueService:
         return self._run(queue_id, run())
 
     # | ----------------------- internals ----------------------- |
+
+    def _sendable(self, refused: str) -> bool:
+        """Every mission has paths or areas that encode; otherwise the operator is told which one does not."""
+        problems = self.draft.problems
+        if problems:
+            mission, problem = problems[0]
+            self._emit_message(f"{refused}: mission '{mission.name or mission.mission_id}': {problem}", False)
+        return not problems
 
     def _label(self, queue_id: str) -> str:
         queue = self.executions.queue(queue_id)
