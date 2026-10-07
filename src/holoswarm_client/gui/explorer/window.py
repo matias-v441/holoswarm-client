@@ -36,7 +36,8 @@ class ExplorerWindow:
 
         with dpg.window(
             label="Task",
-            tag=self.window_tag
+            tag=self.window_tag,
+            no_close=True,  # part of the layout
         ):
             dpg.add_text("", tag=self.header_tag, wrap=0)
             dpg.add_text("", tag=self.hint_tag, color=GREY, wrap=0)

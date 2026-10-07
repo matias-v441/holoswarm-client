@@ -23,6 +23,9 @@ import json
 import threading
 from pathlib import Path
 
+# Distributed with the repository (layouts/ next to src/); the client is installed editable (pip install -e).
+DEFAULT_LAYOUT = Path(__file__).resolve().parents[2] / "layouts" / "default.ini"
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -47,13 +50,6 @@ def main():
         "--robots",
         nargs="+",
         help="Robots to list before their telemetry arrives (optional: robots are discovered from the telemetry).",
-    )
-
-    parser.add_argument(
-        "--config_dir",
-        type=Path,
-        default=Path("config"),
-        help="Path to the config directory",
     )
 
     parser.add_argument(
@@ -83,14 +79,13 @@ def main():
     data_dir = Path(".holoswarm_client")
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    default_layout_file = str(args.config_dir / "default_layout.ini")
-    user_layout_file = str(data_dir / "layout.ini")
+    user_layout_file = str(data_dir / "layout.ini")  # saved on exit; overrides the default once it exists
 
     dpg.configure_app(
         docking=True,
         docking_space=True,
         docking_shift_only=False,
-        init_file=user_layout_file if Path(user_layout_file).exists() else default_layout_file,
+        init_file=user_layout_file if Path(user_layout_file).exists() else str(DEFAULT_LAYOUT),
     )
 
     mission = Mission(*(args.robots or ()))  # more robots join as their telemetry arrives

@@ -67,7 +67,7 @@ class RobotsWindow:
         monitoring.subscribe(self._monitoring_changed)
 
     def add(self) -> None:
-        with dpg.window(label="Robots", tag=self.window_tag):
+        with dpg.window(label="Robots", tag=self.window_tag, no_close=True):  # part of the layout
             dpg.add_text("", tag=self.message_tag, wrap=0)
             with dpg.table(tag=self.table_tag, header_row=True, resizable=True, row_background=True,
                            borders_innerH=True, borders_outerH=True, policy=dpg.mvTable_SizingStretchProp):

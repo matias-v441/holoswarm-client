@@ -90,7 +90,8 @@ class MapGridWindow:
         self.safety_area.aquire()
 
         with dpg.window(
-            tag=self.window_tag
+            tag=self.window_tag,
+            no_close=True,  # part of the layout
         ):
             top_bar_tag = f"{self.window_tag}_top_bar"
             with dpg.group(tag=top_bar_tag, horizontal=True):

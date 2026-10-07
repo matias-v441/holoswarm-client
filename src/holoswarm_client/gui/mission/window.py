@@ -84,7 +84,7 @@ class MissionWindow:
                 dpg.add_theme_color(dpg.mvThemeCol_HeaderHovered, (112, 90, 39, 255))
                 dpg.add_theme_color(dpg.mvThemeCol_HeaderActive, (124, 100, 43, 255))
 
-        with dpg.window(label="Mission", tag=self.window_tag):
+        with dpg.window(label="Mission", tag=self.window_tag, no_close=True):  # part of the layout
             dpg.add_text("", tag=self._t("sync"))
             dpg.add_text("", tag=self._t("message"), wrap=0)
 
