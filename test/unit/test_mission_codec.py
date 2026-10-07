@@ -3,6 +3,7 @@ import math
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from holoswarm_client.data.mission import Coverage, Mission, PointGlobal, PointLocal, Waypoints
@@ -29,6 +30,8 @@ def close(a, b) -> bool:
 
 def normalized_details(jrepr):
     details = json.loads(json.dumps(jrepr["details"]))
+    if jrepr["type"] == "CoveragePlanner":  # export writes the default explicitly
+        details.setdefault("target_subtask_count", 1)
     for robot in details.get("robots", ()):
         if isinstance(robot, dict):
             for point in robot["points"]:
@@ -100,6 +103,18 @@ class CodecValidation(unittest.TestCase):
     def test_mixed_content_is_rejected(self):
         with self.assertRaisesRegex(CodecError, "cannot be submitted as one mission"):
             encode_draft([self.area(), self.path("uav1", [PointLocal((0, 0, 2))])], ("uav1",), HOMES)
+
+    def test_target_subtask_count_round_trips(self):
+        area = replace(self.area(), target_subtask_count=3)
+        payload = encode_draft([area], ("uav1",), HOMES)
+        self.assertEqual(payload["details"]["target_subtask_count"], 3)
+        (decoded,) = decode_mission(payload, HOMES)
+        self.assertEqual(decoded.target_subtask_count, 3)
+        self.assertEqual(encode_draft([self.area()], ("uav1",), HOMES)["details"]["target_subtask_count"], 1)
+
+    def test_target_subtask_count_below_one_is_rejected(self):
+        with self.assertRaisesRegex(CodecError, "sub-task count"):
+            encode_draft([replace(self.area(), target_subtask_count=0)], ("uav1",), HOMES)
 
     def test_multiple_areas_are_rejected(self):
         with self.assertRaisesRegex(CodecError, "one coverage area"):

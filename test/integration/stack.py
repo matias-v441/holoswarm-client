@@ -30,8 +30,8 @@ BRIDGE = "127.0.0.1:8080"
 FLEET_MANAGER_CONTAINER = "ground-fleet_manager-1"
 BRIDGE_CONTAINER = "ground-iroc_bridge-1"
 SAMPLER_CONTAINER = "ground-heightmap_sampler-1"
-# The bridge stores queues in a database of its own during tests, never in the operator's
-# (compose/testing/bridge_test.yaml; ROOT/.assets is /var/lib/holoswarm/assets in the containers).
+# The bridge stores queues in a database of its own during tests, never in the operator's, holoswarm_data's
+# tracked database (compose/testing/bridge_test.yaml; ROOT/.assets is /var/lib/holoswarm/assets in the containers).
 BRIDGE_TEST_CONFIG = "./compose/testing/bridge_test.yaml"
 TEST_DB = COMPOSE_DIR.parent / ".assets" / "test.sqlite"
 STACK_CONTAINER = re.compile(r"^(ground|sim|uav\d+)-")

@@ -46,6 +46,7 @@ class Coverage:
     time_interval: tuple[float,float]
     height_id: str | int
     height: float
+    target_subtask_count: int = 1  # sub-areas the planner splits the area into (each one robot's job)
     uuid: str = field(default_factory=lambda: str(uuid4()))
     assigned_robots: tuple[str,...] = field(default_factory=tuple)
     mission_id: str | None = None  # the queue mission it belongs to; None while it is being drawn

@@ -43,6 +43,15 @@ class CoverageNode:
                 callback=self._on_height_changed,
                 on_enter=True,
             )
+            dpg.add_input_int(
+                label="target subtask count",
+                default_value=wp.target_subtask_count,
+                min_value=1,
+                min_clamped=True,
+                width=120,
+                callback=self._on_target_subtask_count_changed,
+                on_enter=True,
+            )
             for index, (lat, lon) in enumerate(wp.points):
                 with dpg.tree_node(label=f"Point {index}", default_open=True):
                     dpg.add_input_float(
@@ -70,6 +79,10 @@ class CoverageNode:
     def _on_height_changed(self, sender, app_data, user_data=None) -> None:
         coverage: Coverage = self.mission.areas[self.uuid]
         self.mission.push_task(replace(coverage, height=float(app_data)))
+
+    def _on_target_subtask_count_changed(self, sender, app_data, user_data=None) -> None:
+        coverage: Coverage = self.mission.areas[self.uuid]
+        self.mission.push_task(replace(coverage, target_subtask_count=max(1, int(app_data))))
 
     def _on_point_changed(self, sender, app_data, user_data) -> None:
         point_index, coordinate_index = user_data

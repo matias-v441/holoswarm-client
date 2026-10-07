@@ -74,6 +74,8 @@ def encode_coverage(task: Coverage, robot_names: Sequence[str]) -> dict[str, Any
         raise CodecError("The coverage area has no robots assigned")
     if len(task.points) < 3:
         raise CodecError("The coverage area needs at least 3 points")
+    if task.target_subtask_count < 1:
+        raise CodecError("The coverage area needs a target sub-task count of at least 1")
     return {
         "type": COVERAGE_PLANNER,
         "details": {
@@ -82,6 +84,7 @@ def encode_coverage(task: Coverage, robot_names: Sequence[str]) -> dict[str, Any
             "height_id": task.height_id,
             "height": task.height,
             "terminal_action": 0,
+            "target_subtask_count": task.target_subtask_count,
         },
     }
 
@@ -234,6 +237,7 @@ def decode_mission(jrepr: Mapping[str, Any], robot_homes: Mapping[str, tuple[flo
             time_interval=(0., 1.),
             height_id=details["height_id"],
             height=details["height"],
+            target_subtask_count=int(details.get("target_subtask_count", 1)),
             uuid=mission_id or str(uuid4()),
             assigned_robots=tuple(details.get("robots", ())),
         )]
