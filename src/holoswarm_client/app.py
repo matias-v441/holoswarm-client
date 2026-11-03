@@ -111,7 +111,8 @@ def main():
     # The map shows every mission of the selected queue; edits on it re-encode their mission right away.
     queue_view = QueueView(mission, session, queue_draft, on_focus=map_window.focus_tasks)
 
-    explorer = ExplorerWindow(mission, session, queue_draft)
+    # It also sends the selected mission alone through /mission, outside the queues.
+    explorer = ExplorerWindow(mission, session, queue_draft, client, api_loop, monitoring)
     explorer.add()
 
     mission_window = MissionWindow(queue_service, executions, queue_draft, session, view=queue_view)

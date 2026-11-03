@@ -1,9 +1,10 @@
-# Queue API integration tests
+# Mission API integration tests
 
-`test_queue_api.py` drives the bridge's mission queue API through `IROCClient`, against the docker
+`test_queue_api.py` drives the bridge's mission queue API and `test_mission_api.py` its original
+single-mission API (`/mission`, outside the queues) through `IROCClient`, against the docker
 compose stack of the ground repo (`../compose`, override with `HOLOSWARM_COMPOSE_DIR`). The tests
-start the stack with `compose/up.sh` and stop it with `compose/down.sh`; `HOLOSWARM_TEST_STACK`
-selects the environment:
+start the stack with `compose/up.sh` (once per run, shared by both modules) and stop it with
+`compose/down.sh` when the run ends; `HOLOSWARM_TEST_STACK` selects the environment:
 
 | `HOLOSWARM_TEST_STACK` | Stack | Covers | Time |
 | --- | --- | --- | --- |

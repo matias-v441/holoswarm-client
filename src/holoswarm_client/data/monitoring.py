@@ -203,6 +203,11 @@ class Monitoring:
     def telemetry(self, robot_name: str):
         return self._robot_states.get(robot_name, None)
 
+    @property
+    def mission_state(self) -> MissionState | None:
+        """The last /mission/feedback message of the single mission (outside the queues), None before the first."""
+        return self._mission_state
+
     def robot_names(self) -> tuple[str, ...]:
         """Robots that sent telemetry, sorted."""
         return tuple(sorted(self._robot_states))

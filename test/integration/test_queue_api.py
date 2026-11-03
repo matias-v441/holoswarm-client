@@ -1,6 +1,6 @@
 """Mission queue API of the bridge, driven through IROCClient against the compose stack.
 
-The tests start the stack themselves (compose/up.sh) and stop it afterwards (compose/down.sh);
+The tests start the stack themselves (compose/up.sh) and stop it when the test run ends (compose/down.sh);
 HOLOSWARM_TEST_STACK picks the environment (see stack.py and README.md in this directory):
 
   HOLOSWARM_TEST_STACK=ground  ground-only stack with fake mission handlers (fast, default level)
@@ -33,11 +33,7 @@ TERMINAL = ("FINISHED", "CANCELLED", "REJECTED", "INTERRUPTED")
 
 def setUpModule():
     global ENV
-    ENV = STACK.start()
-
-
-def tearDownModule():
-    STACK.stop()
+    ENV = STACK.start()  # shared with the other test modules; stopped when the run ends
 
 
 def load_mission(name: str) -> dict:

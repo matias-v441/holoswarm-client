@@ -1,7 +1,7 @@
 """The compose stack (ROOT/compose) the integration tests run against.
 
-HOLOSWARM_TEST_STACK selects the environment; the tests start it with compose/up.sh and stop it with
-compose/down.sh. They never touch a stack that is already running: if any ground / sim / uav*
+HOLOSWARM_TEST_STACK selects the environment; the tests start it with compose/up.sh (once per test run, shared
+by the test modules) and stop it with compose/down.sh when the run ends. They never touch a stack that is already running: if any ground / sim / uav*
 container is up (it may be a live experiment), the tests are skipped instead.
 
   ground  ground-only stack + fake mission handlers for uav1, uav2 (fast; default level)
@@ -13,6 +13,7 @@ HOLOSWARM_COMPOSE_DIR overrides the location of compose/ (default: ../compose ne
 """
 
 import asyncio
+import atexit
 import json
 import os
 import re
@@ -158,13 +159,16 @@ def wait_staging_works(robot: str, timeout: float) -> None:
 
 
 class Stack:
-    """The environment of this test run; started once per test module."""
+    """The environment of this test run; started by the first test module that needs it, stopped at exit."""
 
     def __init__(self) -> None:
         self.env: Environment | None = None
         self.started = False
 
     def start(self) -> Environment:
+        if self.started:
+            assert self.env is not None
+            return self.env
         name = os.environ.get("HOLOSWARM_TEST_STACK", "")
         if not name:
             raise unittest.SkipTest("set HOLOSWARM_TEST_STACK=ground|sim|flight to run against the compose stack (see README.md)")
@@ -181,6 +185,7 @@ class Stack:
         self.env = env
         print(f"\n[stack] {' '.join(f'{k}={v!r}' for k, v in env.env.items())} ./up.sh {env.mode}", flush=True)
         self.started = True
+        atexit.register(self.stop)
         for path in (TEST_DB, TEST_DB.with_name(TEST_DB.name + "-wal"), TEST_DB.with_name(TEST_DB.name + "-shm")):
             path.unlink(missing_ok=True)  # every run starts without stored queues
         result = subprocess.run(["./up.sh", env.mode], cwd=COMPOSE_DIR, env={**os.environ, **env.env, "BRIDGE_CUSTOM_CONFIG": BRIDGE_TEST_CONFIG},

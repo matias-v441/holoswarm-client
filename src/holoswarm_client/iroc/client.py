@@ -9,6 +9,7 @@ import websockets
 
 DEFAULT_SERVER = "localhost:8080"
 MISSION_STATES = ("start", "pause", "stop")
+FLEET_MISSION_COMMANDS = ("start", "pause", "stop", "unload")
 COMMANDS = ("takeoff", "hover", "land", "home", "land_home")
 QUEUE_COMMANDS = ("start", "cancel", "pause", "resume")
 
@@ -27,7 +28,7 @@ HTTP:
   POST /safety-area/obstacles             {"obstacles": [{"height_id": 0|1, "min_z": number, "max_z": number, "points": [{"x": number, "y": number}]}]}
   GET  /mission
   POST /mission                           {"type": string, "uuid": string?, "details": object}
-  POST /mission/{start|pause|stop}
+  POST /mission/{start|pause|stop|unload}
   POST /robots/{robot_name}/mission/{start|pause|stop}
   POST /robots/{takeoff|hover|land|home|land_home}
   POST /robots/{robot_name}/{takeoff|hover|land|home|land_home}
@@ -186,6 +187,18 @@ class IROCClient:
 
     async def home(self, robot_name: str | None = None) -> httpx.Response:
         return await self.command("home", robot_name)
+
+    # | ----------------------- single mission (outside the queues) ----------------------- |
+
+    async def send_mission(self, mission: dict[str, Any]) -> dict[str, Any]:
+        """Stage one mission ({"type", "details", "uuid"?}) on its robots, outside the queues; nothing moves until
+        control_mission("start"). Returns {"success", "message", "robot_results": [{"robot", "success", "message"}]}."""
+        return await self._request_json("POST", "/mission", mission)
+
+    async def control_mission(self, command: str) -> dict[str, Any]:
+        """Start (or resume), pause or stop the single mission; stop and unload release a staged one."""
+        _check_choice(command, FLEET_MISSION_COMMANDS, "mission command")
+        return await self._request_json("POST", f"/mission/{command}")
 
     # | ----------------------- mission queues ----------------------- |
 
